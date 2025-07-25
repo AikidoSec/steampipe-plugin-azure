@@ -2,27 +2,20 @@ package azure
 
 import (
 	"context"
+	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
 	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/monitor/mgmt/insights"
-	"github.com/Azure/azure-sdk-for-go/sdk/data/aztables"
-
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/go-autorest/autorest"
-	"github.com/tombuildsstuff/giovanni/storage/2018-11-09/queue/queues"
 	"github.com/tombuildsstuff/giovanni/storage/2019-12-12/blob/accounts"
-
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
-	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
-
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
+	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 )
-
-type storageAccountInfo = struct {
-	Account       storage.Account
-	Name          *string
-	ResourceGroup *string
-}
 
 //// TABLE DEFINITION
 
@@ -47,6 +40,9 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				"service": "Microsoft.Storage",
 				"action":  "storageAccounts/read",
 			},
+			IgnoreConfig: &plugin.IgnoreConfig{
+				ShouldIgnoreErrorFunc: isNotFoundError([]string{"ResourceNotFound", "ResourceGroupNotFound"}),
+			},
 		},
 		Columns: azureColumns([]*plugin.Column{
 			{
@@ -58,7 +54,7 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "id",
 				Description: "Contains ID to identify a storage account uniquely.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.ID"),
+				Transform:   transform.FromField("ID"),
 			},
 			{
 				Name:        "type",
@@ -70,167 +66,167 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "access_tier",
 				Description: "The access tier used for billing.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.AccessTier").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Properties.AccessTier").Transform(transformToString),
 			},
 			{
 				Name:        "kind",
 				Description: "The kind of the resource.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.Kind").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Kind").Transform(transformToString),
 			},
 			{
 				Name:        "sku_name",
 				Description: "Contains sku name of the storage account.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.SKU.Name").Transform(transformToString),
 			},
 			{
 				Name:        "sku_tier",
 				Description: "Contains sku tier of the storage account.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.Sku.Tier").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.SKU.Tier").Transform(transformToString),
 			},
 			{
 				Name:        "creation_time",
 				Description: "Creation date and time of the storage account.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("Account.AccountProperties.CreationTime").Transform(convertDateToTime),
+				Transform:   transform.FromField("Account.Properties.CreationTime").Transform(transform.NullIfZeroValue),
 			},
 			{
 				Name:        "allow_blob_public_access",
 				Description: "Specifies whether allow or disallow public access to all blobs or containers in the storage account.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.AllowBlobPublicAccess"),
+				Transform:   transform.FromField("Account.Properties.AllowBlobPublicAccess"),
 			},
 			{
 				Name:        "allow_shared_key_access",
 				Description: "Indicates whether the storage account permits requests to be authorized with the account access key via Shared Key. If false, then all requests, including shared access signatures, must be authorized with Azure Active Directory (Azure AD).",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.AllowSharedKeyAccess"),
+				Transform:   transform.FromField("Account.Properties.AllowSharedKeyAccess"),
 			},
 			{
 				Name:        "blob_change_feed_enabled",
 				Description: "Specifies whether change feed event logging is enabled for the Blob service.",
 				Type:        proto.ColumnType_BOOL,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.ChangeFeed.Enabled"),
+				Transform:   transform.FromField("BlobServiceProperties.ChangeFeed.Enabled"),
 			},
 			{
 				Name:        "blob_container_soft_delete_enabled",
 				Description: "Specifies whether DeleteRetentionPolicy is enabled.",
 				Type:        proto.ColumnType_BOOL,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.ContainerDeleteRetentionPolicy.Enabled"),
+				Transform:   transform.FromField("BlobServiceProperties.ContainerDeleteRetentionPolicy.Enabled"),
 			},
 			{
 				Name:        "blob_container_soft_delete_retention_days",
 				Description: "Indicates the number of days that the deleted item should be retained.",
 				Type:        proto.ColumnType_INT,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.ContainerDeleteRetentionPolicy.Days"),
+				Transform:   transform.FromField("BlobServiceProperties.ContainerDeleteRetentionPolicy.Days"),
 			},
 			{
 				Name:        "blob_restore_policy_days",
 				Description: "Specifies how long the blob can be restored.",
 				Type:        proto.ColumnType_INT,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.RestorePolicy.Days"),
+				Transform:   transform.FromField("BlobServiceProperties.RestorePolicy.Days"),
 			},
 			{
 				Name:        "blob_restore_policy_enabled",
 				Description: "Specifies whether blob restore is enabled.",
 				Type:        proto.ColumnType_BOOL,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.RestorePolicy.Enabled"),
+				Transform:   transform.FromField("BlobServiceProperties.RestorePolicy.Enabled"),
 			},
 			{
 				Name:        "blob_soft_delete_enabled",
 				Description: "Specifies whether DeleteRetentionPolicy is enabled.",
 				Type:        proto.ColumnType_BOOL,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.DeleteRetentionPolicy.Enabled"),
+				Transform:   transform.FromField("BlobServiceProperties.DeleteRetentionPolicy.Enabled"),
 			},
 			{
 				Name:        "blob_soft_delete_retention_days",
 				Description: "Indicates the number of days that the deleted item should be retained.",
 				Type:        proto.ColumnType_INT,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.DeleteRetentionPolicy.Days"),
+				Transform:   transform.FromField("BlobServiceProperties.DeleteRetentionPolicy.Days"),
 			},
 			{
 				Name:        "blob_versioning_enabled",
 				Description: "Specifies whether versioning is enabled.",
 				Type:        proto.ColumnType_BOOL,
 				Hydrate:     getAzureStorageAccountBlobProperties,
-				Transform:   transform.FromField("BlobServicePropertiesProperties.IsVersioningEnabled"),
+				Transform:   transform.FromField("BlobServiceProperties.IsVersioningEnabled"),
 			},
 			{
 				Name:        "enable_https_traffic_only",
 				Description: "Allows https traffic only to storage service if sets to true.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.EnableHTTPSTrafficOnly"),
+				Transform:   transform.FromField("Account.Properties.EnableHTTPSTrafficOnly"),
 			},
 			{
 				Name:        "encryption_key_source",
 				Description: "Contains the encryption keySource (provider).",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.KeySource").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Properties.Encryption.KeySource").Transform(transformToString),
 			},
 			{
 				Name:        "encryption_key_vault_properties_key_current_version_id",
 				Description: "The object identifier of the current versioned Key Vault Key in use.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.KeyVaultProperties.CurrentVersionedKeyIdentifier"),
+				Transform:   transform.FromField("Account.Properties.Encryption.KeyVaultProperties.CurrentVersionedKeyIdentifier"),
 			},
 			{
 				Name:        "encryption_key_vault_properties_key_name",
 				Description: "The name of KeyVault key.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.KeyVaultProperties.KeyName"),
+				Transform:   transform.FromField("Account.Properties.Encryption.KeyVaultProperties.KeyName"),
 			},
 			{
 				Name:        "encryption_key_vault_properties_key_vault_uri",
 				Description: "The Uri of KeyVault.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.KeyVaultProperties.KeyVaultURI"),
+				Transform:   transform.FromField("Account.Properties.Encryption.KeyVaultProperties.KeyVaultURI"),
 			},
 			{
 				Name:        "encryption_key_vault_properties_key_version",
 				Description: "The version of KeyVault key.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.KeyVaultProperties.KeyVersion"),
+				Transform:   transform.FromField("Account.Properties.Encryption.KeyVaultProperties.KeyVersion"),
 			},
 			{
 				Name:        "encryption_key_vault_properties_last_rotation_time",
 				Description: "Timestamp of last rotation of the Key Vault Key.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.KeyVaultProperties.LastKeyRotationTimestamp").Transform(convertDateToTime),
+				Transform:   transform.FromField("Account.Properties.Encryption.KeyVaultProperties.LastKeyRotationTimestamp").Transform(transform.NullIfZeroValue),
 			},
 			{
 				Name:        "failover_in_progress",
 				Description: "Specifies whether the failover is in progress.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.FailoverInProgress"),
+				Transform:   transform.FromField("Account.Properties.FailoverInProgress"),
 			},
 			{
 				Name:        "file_soft_delete_enabled",
 				Description: "Specifies whether DeleteRetentionPolicy is enabled.",
 				Type:        proto.ColumnType_BOOL,
 				Hydrate:     getAzureStorageAccountFileProperties,
-				Transform:   transform.FromField("ShareDeleteRetentionPolicy.Enabled"),
+				Transform:   transform.FromField("FileServiceProperties.ShareDeleteRetentionPolicy.Enabled"),
 			},
 			{
 				Name:        "file_soft_delete_retention_days",
 				Description: "Indicates the number of days that the deleted item should be retained.",
 				Type:        proto.ColumnType_INT,
 				Hydrate:     getAzureStorageAccountFileProperties,
-				Transform:   transform.FromField("ShareDeleteRetentionPolicy.Days"),
+				Transform:   transform.FromField("FileServiceProperties.ShareDeleteRetentionPolicy.Days"),
 			},
 			{
 				Name:        "is_hns_enabled",
 				Description: "Specifies whether account HierarchicalNamespace is enabled.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.IsHnsEnabled"),
+				Transform:   transform.FromField("Account.Properties.IsHnsEnabled"),
 			},
 			{
 				Name:        "queue_logging_delete",
@@ -306,97 +302,97 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "minimum_tls_version",
 				Description: "Contains the minimum TLS version to be permitted on requests to storage.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.MinimumTLSVersion").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Properties.MinimumTLSVersion").Transform(transformToString),
 			},
 			{
 				Name:        "network_rule_bypass",
 				Description: "Specifies whether traffic is bypassed for Logging/Metrics/AzureServices.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.NetworkRuleSet.Bypass").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Properties.NetworkRuleSet.Bypass").Transform(transformToString),
 			},
 			{
 				Name:        "network_rule_default_action",
 				Description: "Specifies the default action of allow or deny when no other rules match.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.NetworkRuleSet.DefaultAction").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Properties.NetworkRuleSet.DefaultAction").Transform(transformToString),
 			},
 			{
 				Name:        "primary_blob_endpoint",
 				Description: "Contains the blob endpoint.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryEndpoints.Blob"),
+				Transform:   transform.FromField("Account.Properties.PrimaryEndpoints.Blob"),
 			},
 			{
 				Name:        "primary_dfs_endpoint",
 				Description: "Contains the dfs endpoint.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryEndpoints.Dfs"),
+				Transform:   transform.FromField("Account.Properties.PrimaryEndpoints.Dfs"),
 			},
 			{
 				Name:        "primary_file_endpoint",
 				Description: "Contains the file endpoint.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryEndpoints.File"),
+				Transform:   transform.FromField("Account.Properties.PrimaryEndpoints.File"),
 			},
 			{
 				Name:        "primary_location",
 				Description: "Contains the location of the primary data center for the storage account.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryLocation"),
+				Transform:   transform.FromField("Account.Properties.PrimaryLocation"),
 			},
 			{
 				Name:        "primary_queue_endpoint",
 				Description: "Contains the queue endpoint.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryEndpoints.Queue"),
+				Transform:   transform.FromField("Account.Properties.PrimaryEndpoints.Queue"),
 			},
 			{
 				Name:        "primary_table_endpoint",
 				Description: "Contains the table endpoint.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryEndpoints.Table"),
+				Transform:   transform.FromField("Account.Properties.PrimaryEndpoints.Table"),
 			},
 			{
 				Name:        "primary_web_endpoint",
 				Description: "Contains the web endpoint.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PrimaryEndpoints.Web"),
+				Transform:   transform.FromField("Account.Properties.PrimaryEndpoints.Web"),
 			},
 			{
 				Name:        "public_network_access",
 				Description: "Allow or disallow public network access to Storage Account. Value is optional but if passed in, must be Enabled or Disabled.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.PublicNetworkAccess"),
+				Transform:   transform.FromField("Account.Properties.PublicNetworkAccess"),
 			},
 			{
 				Name:        "status_of_primary",
 				Description: "The status indicating whether the primary location of the storage account is available or unavailable. Possible values include: 'available', 'unavailable'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.StatusOfPrimary"),
+				Transform:   transform.FromField("Account.Properties.StatusOfPrimary"),
 			},
 			{
 				Name:        "provisioning_state",
 				Description: "The provisioning state of the storage account resource.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.ProvisioningState").Transform(transform.ToString),
+				Transform:   transform.FromField("Account.Properties.ProvisioningState").Transform(transformToString),
 			},
 			{
 				Name:        "require_infrastructure_encryption",
 				Description: "Specifies whether or not the service applies a secondary layer of encryption with platform managed keys for data at rest.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.RequireInfrastructureEncryption"),
+				Transform:   transform.FromField("Account.Properties.Encryption.RequireInfrastructureEncryption"),
 			},
 			{
 				Name:        "secondary_location",
 				Description: "Contains the location of the geo-replicated secondary for the storage account.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.SecondaryLocation"),
+				Transform:   transform.FromField("Account.Properties.SecondaryLocation"),
 			},
 			{
 				Name:        "status_of_secondary",
 				Description: "The status indicating whether the secondary location of the storage account is available or unavailable. Only available if the SKU name is Standard_GRS or Standard_RAGRS. Possible values include: 'available', 'unavailable'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.StatusOfSecondary"),
+				Transform:   transform.FromField("Account.Properties.StatusOfSecondary"),
 			},
 			{
 				Name:        "blob_service_logging",
@@ -430,7 +426,7 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "encryption_services",
 				Description: "A list of services which support encryption.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Account.AccountProperties.Encryption.Services"),
+				Transform:   transform.FromField("Account.Properties.Encryption.Services"),
 			},
 			{
 				Name:        "lifecycle_management_policy",
@@ -443,13 +439,13 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "network_ip_rules",
 				Description: "A list of IP ACL rules.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Account.AccountProperties.NetworkRuleSet.IPRules"),
+				Transform:   transform.FromField("Account.Properties.NetworkRuleSet.IPRules"),
 			},
 			{
 				Name:        "private_endpoint_connections",
 				Description: "A list of private endpoint connection associated with the specified storage account.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Account.AccountProperties.PrivateEndpointConnections"),
+				Transform:   transform.FromField("Account.Properties.PrivateEndpointConnections"),
 			},
 			{
 				Name:        "table_properties",
@@ -469,55 +465,55 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "virtual_network_rules",
 				Description: "A list of virtual network rules.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Account.AccountProperties.NetworkRuleSet.VirtualNetworkRules"),
+				Transform:   transform.FromField("Account.Properties.NetworkRuleSet.VirtualNetworkRules"),
 			},
 			{
 				Name:        "allow_cross_tenant_replication",
 				Description: "Specifies whether cross-tenant replication is allowed for the storage account.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.AllowCrossTenantReplication"),
+				Transform:   transform.FromField("Account.Properties.AllowCrossTenantReplication"),
 			},
 			{
 				Name:        "default_to_oauth_authentication",
 				Description: "Specifies whether Azure Active Directory is the default authentication method.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.DefaultToOAuthAuthentication"),
+				Transform:   transform.FromField("Account.Properties.DefaultToOAuthAuthentication"),
 			},
 			{
 				Name:        "sas_expiration_period",
 				Description: "Specifies the time period for SAS token expiration.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.SasPolicy.SasExpirationPeriod"),
+				Transform:   transform.FromField("Account.Properties.SasPolicy.SasExpirationPeriod"),
 			},
 			{
 				Name:        "sas_expiration_action",
 				Description: "The action to be taken when a SAS token expires. Possible values include: 'Log'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.SasPolicy.ExpirationAction"),
+				Transform:   transform.FromField("Account.Properties.SasPolicy.ExpirationAction"),
 			},
 			{
 				Name:        "is_local_user_enabled",
 				Description: "Specifies whether local RBAC users are enabled for the storage account.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.IsLocalUserEnabled"),
+				Transform:   transform.FromField("Account.Properties.IsLocalUserEnabled"),
 			},
 			{
 				Name:        "routing_preference_routing_choice",
 				Description: "Specifies the network routing choice for the storage account (MicrosoftRouting or InternetRouting).",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account.AccountProperties.RoutingPreference.RoutingChoice"),
+				Transform:   transform.FromField("Account.Properties.RoutingPreference.RoutingChoice"),
 			},
 			{
 				Name:        "routing_preference_publish_microsoft_endpoints",
 				Description: "Specifies whether Microsoft routing endpoints are published.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.RoutingPreference.PublishMicrosoftEndpoints"),
+				Transform:   transform.FromField("Account.Properties.RoutingPreference.PublishMicrosoftEndpoints"),
 			},
 			{
 				Name:        "routing_preference_publish_internet_endpoints",
 				Description: "Specifies whether Internet routing endpoints are published.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Account.AccountProperties.RoutingPreference.PublishInternetEndpoints"),
+				Transform:   transform.FromField("Account.Properties.RoutingPreference.PublishInternetEndpoints"),
 			},
 
 			// Steampipe standard columns
@@ -551,114 +547,139 @@ func tableAzureStorageAccount(_ context.Context) *plugin.Table {
 				Name:        "resource_group",
 				Description: ColumnDescriptionResourceGroup,
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("ResourceGroup").Transform(toLower),
+				Transform:   transform.FromField("ResourceGroup"),
 			},
 		}),
 	}
 }
 
+type AccountInfo = struct {
+	Account        armstorage.Account
+	Name           string
+	ID             string
+	SubscriptionID string
+	ResourceGroup  string
+}
+
 //// LIST FUNCTION
 
 func listStorageAccounts(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
 	logger := plugin.Logger(ctx)
-	if err != nil {
-		logger.Error("listStorageAccounts", "get session error", err)
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-	storageClient := storage.NewAccountsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
+	logger.Trace("listStorageAccounts")
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	result, err := storageClient.List(ctx)
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		logger.Error("listStorageAccounts", "api error", err)
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	for _, account := range result.Values() {
-		resourceGroup := &strings.Split(string(*account.ID), "/")[4]
-		d.StreamListItem(ctx, &storageAccountInfo{account, account.Name, resourceGroup})
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
+	// Create client
+	client, err := armstorage.NewAccountsClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating accounts client", "client_error", err)
+		return nil, err
 	}
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListPager(nil)
+
+	for pager.More() {
+		// apply rate limiting
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, account := range result.Values() {
-			resourceGroup := &strings.Split(string(*account.ID), "/")[4]
-			d.StreamListItem(ctx, &storageAccountInfo{account, account.Name, resourceGroup})
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+		for _, v := range resp.Value {
+			resourceID, err := arm.ParseResourceID(*v.ID)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing resource ID: %w", err)
+			}
+
+			d.StreamListItem(ctx, &AccountInfo{
+				Account:        *v,
+				Name:           *v.Name,
+				ID:             *v.ID,
+				SubscriptionID: session.SubscriptionID,
+				ResourceGroup:  resourceID.ResourceGroupName,
+			})
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
 	}
 
-	return nil, err
+	return nil, nil
 }
 
 //// HYDRATE FUNCTIONS
 
-func getStorageAccount(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getStorageAccount")
-
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
-	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
+func getStorageAccount(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
 
-	storageClient := storage.NewAccountsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
+	logger := plugin.Logger(ctx)
+	logger.Trace("getStorageAccount")
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	op, err := storageClient.GetProperties(ctx, resourceGroup, name, storage.AccountExpand("blobRestoreStatus"))
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	return &storageAccountInfo{op, op.Name, &resourceGroup}, nil
+	// Create client
+	client, err := armstorage.NewAccountsClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating accounts client", "client_error", err)
+		return nil, err
+	}
+
+	statusExpand := armstorage.StorageAccountExpand("blobRestoreStatus")
+	resp, err := client.GetProperties(ctx, resourceGroup, name, &armstorage.AccountsClientGetPropertiesOptions{
+		Expand: &statusExpand,
+	})
+	if err != nil {
+		logger.Error("error getting storage account properties", "api_error", err)
+		return nil, err
+	}
+
+	return &AccountInfo{
+		Account:        resp.Account,
+		Name:           *resp.Name,
+		ID:             *resp.ID,
+		SubscriptionID: session.SubscriptionID,
+	}, nil
 }
 
 func getAzureStorageAccountLifecycleManagementPolicy(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	logger := plugin.Logger(ctx)
+	logger.Trace("getAzureStorageAccountLifecycleManagementPolicy")
+
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
 
-	storageClient := storage.NewManagementPoliciesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	op, err := storageClient.Get(ctx, *accountData.ResourceGroup, *accountData.Name)
+	// Create client
+	client, err := armstorage.NewManagementPoliciesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
-		if strings.Contains(err.Error(), "ManagementPolicyNotFound") {
-			return nil, nil
-		}
+		logger.Error("error while creating management policies client", "client_error", err)
+		return nil, err
+	}
+
+	op, err := client.Get(ctx, accountData.ResourceGroup, accountData.Name, "default", nil)
+	if err != nil {
+		logger.Error("error getting storage account management policy", "error", err)
 		return nil, err
 	}
 
@@ -673,129 +694,133 @@ func getAzureStorageAccountLifecycleManagementPolicy(ctx context.Context, d *plu
 	if op.Type != nil {
 		objectMap["type"] = op.Type
 	}
-	if op.ManagementPolicyProperties != nil {
-		objectMap["properties"] = op.ManagementPolicyProperties
+	if op.ManagementPolicy.Properties != nil {
+		objectMap["properties"] = op.ManagementPolicy.Properties
 	}
 
 	return objectMap, nil
 }
 
+// TODO: test fields
 func getAzureStorageAccountBlobProperties(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
+
+	logger := plugin.Logger(ctx)
+	logger.Trace("getAzureStorageAccountBlobProperties")
 
 	// Blob is not supported for the account if storage type is FileStorage
-	if accountData.Account.Kind == "FileStorage" {
+	if *accountData.Account.Kind == "FileStorage" {
 		return nil, nil
 	}
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
 
-	storageClient := storage.NewBlobServicesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	op, err := storageClient.GetServiceProperties(ctx, *accountData.ResourceGroup, *accountData.Name)
+	// Create client
+	client, err := armstorage.NewBlobServicesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
+		logger.Error("error while creating blob services client", "client_error", err)
 		return nil, err
 	}
-	return op, nil
+
+	op, err := client.GetServiceProperties(ctx, accountData.ResourceGroup, accountData.Name, nil)
+	if err != nil {
+		logger.Error("error getting storage account blob service properties", "api_error", err)
+		return nil, err
+	}
+
+	return op.BlobServiceProperties, nil
 }
 
 func getAzureStorageAccountTableProperties(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 
-	// Blob is not supported for the account if storage type is FileStorage
-	if accountData.Account.Kind == "FileStorage" {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getAzureStorageAccountTableProperties")
+
+	// Table is not supported for the account if storage type is FileStorage
+	if *accountData.Account.Kind == "FileStorage" {
 		return nil, nil
 	}
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-
-	storageClient := storage.NewAccountsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	// List Storage account keys
-	keys, err := storageClient.ListKeys(ctx, *accountData.ResourceGroup, *accountData.Name, "")
-	if err != nil {
-		plugin.Logger(ctx).Error("azure_storage_account.getAzureStorageAccountTableProperties.ListKeys", "api_error", err)
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	// Get table properties
-	var tableProperties aztables.ServiceProperties
-	for _, key := range *keys.Keys {
-		serviceUrl := "https://" + *accountData.Name + ".table.core.windows.net/"
-
-		auth, err := aztables.NewSharedKeyCredential(*accountData.Name, *key.Value)
-		if err != nil {
-			plugin.Logger(ctx).Error("azure_storage_account.getAzureStorageAccountTableProperties", "credential_error", err)
-			return nil, err
-		}
-
-		client, _ := aztables.NewServiceClientWithSharedKey(serviceUrl, auth, nil)
-
-		op, err := client.GetProperties(ctx, &aztables.GetPropertiesOptions{})
-		if err != nil {
-			plugin.Logger(ctx).Error("azure_storage_account.getAzureStorageAccountTableProperties", "api_error", err)
-			return nil, err
-		} else {
-			tableProperties = op.ServiceProperties
-			break
-		}
+	// Create client
+	client, err := armstorage.NewTableServicesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating table services client", "client_error", err)
+		return nil, err
 	}
 
-	return tableProperties, nil
+	op, err := client.GetServiceProperties(ctx, accountData.ResourceGroup, accountData.Name, nil)
+	if err != nil {
+		logger.Error("error getting storage account table properties", "api_error", err)
+		return nil, err
+	}
+
+	return op.TableServiceProperties, nil
 }
 
 func listAzureStorageAccountEncryptionScope(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
+
+	logger := plugin.Logger(ctx)
+	logger.Trace("listAzureStorageAccountEncryptionScope")
+
+	// Table is not supported for FileStorage accounts type
+	if *accountData.Account.Kind == "FileStorage" {
+		return nil, nil
+	}
 
 	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
 
-	storageClient := storage.NewEncryptionScopesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	encryptionScope, err := storageClient.List(ctx, *accountData.ResourceGroup, *accountData.Name)
+	// Create client
+	client, err := armstorage.NewEncryptionScopesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
-		plugin.Logger(ctx).Error("listAzureStorageAccountEncryptionScope", "List", err)
+		logger.Error("error while creating encryption scopes client", "client_error", err)
 		return nil, err
 	}
+
+	// Limiting the results
+	limit := d.QueryContext.Limit
+	maxResult := 1000
+	if d.QueryContext.Limit != nil {
+		if *limit < 1000 {
+			maxResult = int(*limit)
+		}
+	}
+	maxResultInt := int32(maxResult)
+
+	pager := client.NewListPager(accountData.ResourceGroup, accountData.Name, &armstorage.EncryptionScopesClientListOptions{Maxpagesize: &maxResultInt})
 
 	var encryptionScopes []map[string]interface{}
 
-	for _, scope := range encryptionScope.Values() {
-		encryptionScopes = append(encryptionScopes, storageAccountEncryptionScopeMap(scope))
-	}
+	for pager.More() {
+		// apply rate limiting
+		d.WaitForListRateLimit(ctx)
 
-	for encryptionScope.NotDone() {
-		err = encryptionScope.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
-			plugin.Logger(ctx).Error("listAzureStorageAccountEncryptionScope", "List_paging", err)
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
-		for _, scope := range encryptionScope.Values() {
-			encryptionScopes = append(encryptionScopes, storageAccountEncryptionScopeMap(scope))
+
+		for _, v := range resp.Value {
+			encryptionScopes = append(encryptionScopes, storageAccountEncryptionScopeMap(*v))
 		}
 	}
 
@@ -803,7 +828,7 @@ func listAzureStorageAccountEncryptionScope(ctx context.Context, d *plugin.Query
 }
 
 func listAzureStorageAccountAccessKeys(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "MANAGEMENT")
@@ -819,7 +844,7 @@ func listAzureStorageAccountAccessKeys(ctx context.Context, d *plugin.QueryData,
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &storageClient, d.Connection)
 
-	keys, err := storageClient.ListKeys(ctx, *accountData.ResourceGroup, *accountData.Name, "")
+	keys, err := storageClient.ListKeys(ctx, accountData.ResourceGroup, accountData.Name, "")
 	if err != nil {
 		plugin.Logger(ctx).Error("azure_storage_account.listAzureStorageAccountAccessKeys", "api_error", err)
 		return nil, err
@@ -845,10 +870,10 @@ func listAzureStorageAccountAccessKeys(ctx context.Context, d *plugin.QueryData,
 }
 
 func getAzureStorageAccountBlobServiceLogging(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 
 	// Blob is not supported for the account if storage type is FileStorage
-	if accountData.Account.Kind == "FileStorage" {
+	if *accountData.Account.Kind == "FileStorage" {
 		return nil, nil
 	}
 
@@ -865,7 +890,7 @@ func getAzureStorageAccountBlobServiceLogging(ctx context.Context, d *plugin.Que
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &storageClient, d.Connection)
 
-	accountKeys, err := storageClient.ListKeys(ctx, *accountData.ResourceGroup, *accountData.Name, "")
+	accountKeys, err := storageClient.ListKeys(ctx, accountData.ResourceGroup, accountData.Name, "")
 	if err != nil {
 		// storage.AccountsClient#ListKeys: Failure sending request: StatusCode=409 -- Original Error: autorest/azure: Service returned an error. Status=<nil> Code="ScopeLocked"
 		// Message="The scope '/subscriptions/********-****-****-****-************/resourceGroups/turbot_rg/providers/Microsoft.Storage/storageAccounts/delmett'
@@ -879,7 +904,7 @@ func getAzureStorageAccountBlobServiceLogging(ctx context.Context, d *plugin.Que
 
 	if *accountKeys.Keys != nil || len(*accountKeys.Keys) > 0 {
 		key := (*accountKeys.Keys)[0]
-		storageAuth, err := autorest.NewSharedKeyAuthorizer(*accountData.Name, *key.Value, autorest.SharedKeyLite)
+		storageAuth, err := autorest.NewSharedKeyAuthorizer(accountData.Name, *key.Value, autorest.SharedKeyLite)
 		if err != nil {
 			return nil, err
 		}
@@ -888,7 +913,7 @@ func getAzureStorageAccountBlobServiceLogging(ctx context.Context, d *plugin.Que
 		client.Client.Authorizer = storageAuth
 		client.BaseURI = session.StorageEndpointSuffix
 
-		resp, err := client.GetServiceProperties(ctx, *accountData.Name)
+		resp, err := client.GetServiceProperties(ctx, accountData.Name)
 		if err != nil {
 			if strings.Contains(err.Error(), "FeatureNotSupportedForAccount") {
 				return nil, nil
@@ -901,99 +926,71 @@ func getAzureStorageAccountBlobServiceLogging(ctx context.Context, d *plugin.Que
 }
 
 func getAzureStorageAccountFileProperties(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 
-	// ge.FileServicesClient#GetServiceProperties: Failure responding to request: StatusCode=400 --
-	// Original Error: autorest/azure: Service returned an error. Status=400 Code="FeatureNotSupportedForAccount" Message="File is not supported for the account."
-	if accountData.Account.Kind == "BlobStorage" {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getAzureStorageAccountFileProperties")
+
+	// Table is not supported for the account if storage type is BlobStorage
+	if *accountData.Account.Kind == "BlobStorage" {
 		return nil, nil
 	}
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-
-	storageClient := storage.NewFileServicesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	op, err := storageClient.GetServiceProperties(ctx, *accountData.ResourceGroup, *accountData.Name)
-	if err != nil {
-		if strings.Contains(err.Error(), "FeatureNotSupportedForAccount") {
-			return nil, nil
-		}
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	return op.FileServicePropertiesProperties, nil
+	// Create client
+	client, err := armstorage.NewFileServicesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating file services client", "client_error", err)
+		return nil, err
+	}
+
+	op, err := client.GetServiceProperties(ctx, accountData.ResourceGroup, accountData.Name, nil)
+	if err != nil {
+		logger.Error("error getting storage account file service properties", "api_error", err)
+		return nil, err
+	}
+
+	return op.FileServiceProperties, nil
 }
 
 func getAzureStorageAccountQueueProperties(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 
-	// ge.FileServicesClient#GetServiceProperties: Failure responding to request: StatusCode=400 --
-	// Original Error: autorest/azure: Service returned an error. Status=400 Code="FeatureNotSupportedForAccount" Message="File is not supported for the account."
-	if accountData.Account.Sku.Tier == "Standard" && (accountData.Account.Kind == "Storage" || accountData.Account.Kind == "StorageV2") {
-		// Create session
-		session, err := GetNewSession(ctx, d, "MANAGEMENT")
-		if err != nil {
-			return nil, err
-		}
-		subscriptionID := session.SubscriptionID
+	logger := plugin.Logger(ctx)
+	logger.Trace("getAzureStorageAccountQueueProperties")
 
-		storageClient := storage.NewAccountsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-		storageClient.Authorizer = session.Authorizer
-
-		// Apply Retry rule
-		ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-		accountKeys, err := storageClient.ListKeys(ctx, *accountData.ResourceGroup, *accountData.Name, "")
-		if err != nil {
-			// storage.AccountsClient#ListKeys: Failure sending request: StatusCode=409 -- Original Error: autorest/azure: Service returned an error. Status=<nil> Code="ScopeLocked"
-			// Message="The scope '/subscriptions/********-****-****-****-************/resourceGroups/turbot_rg/providers/Microsoft.Storage/storageAccounts/delmett'
-			// cannot perform write operation because following scope(s) are locked: '/subscriptions/********-****-****-****-************/resourcegroups/turbot_rg/providers/Microsoft.Storage/storageAccounts/delmett'.
-			// Please remove the lock and try again."
-			if strings.Contains(err.Error(), "ScopeLocked") {
-				return nil, nil
-			}
-			return nil, err
-		}
-
-		if *accountKeys.Keys != nil || len(*accountKeys.Keys) > 0 {
-			key := (*accountKeys.Keys)[0]
-			storageAuth, err := autorest.NewSharedKeyAuthorizer(*accountData.Name, *key.Value, autorest.SharedKeyLite)
-			if err != nil {
-				return nil, err
-			}
-
-			queuesClient := queues.New()
-			queuesClient.Client.Authorizer = storageAuth
-			queuesClient.BaseURI = session.StorageEndpointSuffix
-
-			// using 	"github.com/tombuildsstuff/giovanni/storage/2018-11-09/queue/queues" to logging details
-			// https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2019-06-01/storage#QueueServicePropertiesProperties
-			// In azure SDK for GO, we still don't have logging properties in its output
-			resp, err := queuesClient.GetServiceProperties(ctx, *accountData.Name)
-
-			if err != nil {
-				if strings.Contains(err.Error(), "FeatureNotSupportedForAccount") {
-					return nil, nil
-				}
-				return nil, err
-			}
-			return resp.StorageServiceProperties, nil
-		}
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
+		return nil, err
 	}
-	return nil, nil
+
+	// Create client
+	client, err := armstorage.NewQueueServicesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating queue services client", "client_error", err)
+		return nil, err
+	}
+
+	op, err := client.GetServiceProperties(ctx, accountData.ResourceGroup, accountData.Name, nil)
+	if err != nil {
+		logger.Error("error getting storage account queue service properties", "api_error", err)
+		return nil, err
+	}
+
+	return op.QueueServiceProperties, nil
 }
 
 func listStorageAccountDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("listStorageAccountDiagnosticSettings")
-	accountData := h.Item.(*storageAccountInfo)
+	accountData := h.Item.(*AccountInfo)
 	id := *accountData.Account.ID
 
 	// Create session
@@ -1038,7 +1035,7 @@ func listStorageAccountDiagnosticSettings(ctx context.Context, d *plugin.QueryDa
 }
 
 // If we return the API response directly, the output only gives the top level property
-func storageAccountEncryptionScopeMap(scope storage.EncryptionScope) map[string]interface{} {
+func storageAccountEncryptionScopeMap(scope armstorage.EncryptionScope) map[string]interface{} {
 	objMap := make(map[string]interface{})
 	if scope.ID != nil {
 		objMap["Id"] = scope.ID
@@ -1050,10 +1047,10 @@ func storageAccountEncryptionScopeMap(scope storage.EncryptionScope) map[string]
 		objMap["Type"] = scope.Type
 	}
 	if scope.EncryptionScopeProperties != nil {
-		if scope.EncryptionScopeProperties.Source != "" {
+		if scope.EncryptionScopeProperties.Source != nil && *scope.EncryptionScopeProperties.Source != "" {
 			objMap["Source"] = scope.EncryptionScopeProperties.Source
 		}
-		if scope.EncryptionScopeProperties.State != "" {
+		if scope.EncryptionScopeProperties.State != nil && *scope.EncryptionScopeProperties.State != "" {
 			objMap["State"] = scope.EncryptionScopeProperties.State
 		}
 		if scope.EncryptionScopeProperties.CreationTime != nil {
@@ -1069,4 +1066,24 @@ func storageAccountEncryptionScopeMap(scope storage.EncryptionScope) map[string]
 		}
 	}
 	return objMap
+}
+
+// transformToString is a transform function that converts the value to a string
+// It also works for custom types that are string aliases
+func transformToString(ctx context.Context, d *transform.TransformData) (any, error) {
+	if d.Value == nil {
+		return nil, nil
+	}
+
+	val := d.Value
+	v := reflect.ValueOf(val)
+
+	elem := v.Elem()
+
+	// Check if the underlying type is based on string
+	if elem.Kind() == reflect.String {
+		return elem.String(), nil
+	}
+
+	return transform.ToString(ctx, d)
 }
