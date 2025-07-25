@@ -108,10 +108,10 @@ func tableAzureStorageTableService(_ context.Context) *plugin.Table {
 
 func listStorageTableServices(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Get the details of storage account
-	account := h.Item.(*storageAccountInfo)
+	account := h.Item.(*AccountInfo)
 
 	// Table is not supported for the account if storage type is FileStorage
-	if account.Account.Kind == "FileStorage" {
+	if *account.Account.Kind == "FileStorage" {
 		return nil, nil
 	}
 
@@ -127,13 +127,13 @@ func listStorageTableServices(ctx context.Context, d *plugin.QueryData, h *plugi
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &storageClient, d.Connection)
 
-	result, err := storageClient.List(ctx, *account.ResourceGroup, *account.Name)
+	result, err := storageClient.List(ctx, account.ResourceGroup, account.Name)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, tableService := range *result.Value {
-		d.StreamListItem(ctx, &tableServiceInfo{tableService, account.Name, tableService.Name, account.ResourceGroup, account.Account.Location})
+		d.StreamListItem(ctx, &tableServiceInfo{tableService, &account.Name, tableService.Name, &account.ResourceGroup, account.Account.Location})
 		// Check if context has been cancelled or if the limit has been hit (if specified)
 		// if there is a limit, it will return the number of rows required to reach this limit
 		if d.RowsRemaining(ctx) == 0 {

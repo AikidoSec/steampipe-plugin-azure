@@ -2,21 +2,14 @@ package azure
 
 import (
 	"context"
-	"strings"
+	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
+	"github.com/turbot/go-kit/types"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 )
-
-type queueInfo = struct {
-	Queue         storage.ListQueue
-	Account       *string
-	Name          *string
-	ResourceGroup *string
-	Location      *string
-}
 
 //// TABLE DEFINITION
 
@@ -36,8 +29,11 @@ func tableAzureStorageQueue(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			ParentHydrate: listStorageAccounts,
-			Hydrate:       listStorageQueues,
+			Hydrate: listStorageQueues,
+			KeyColumns: plugin.KeyColumnSlice{
+				{Name: "resource_group", Require: plugin.Required},
+				{Name: "storage_account_name", Require: plugin.Required},
+			},
 			Tags: map[string]string{
 				"service": "Microsoft.Storage",
 				"action":  "storageAccounts/queueServices/queues/read",
@@ -53,25 +49,25 @@ func tableAzureStorageQueue(_ context.Context) *plugin.Table {
 				Name:        "id",
 				Description: "Contains ID to identify a queue uniquely.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Queue.ID"),
+				Transform:   transform.FromField("ID"),
 			},
 			{
 				Name:        "storage_account_name",
 				Description: "An unique read-only string that changes whenever the resource is updated.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account"),
+				Transform:   transform.FromField("StorageAccountName"),
 			},
 			{
 				Name:        "type",
 				Description: "Type of the resource.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Queue.Type"),
+				Transform:   transform.FromField("Type"),
 			},
 			{
 				Name:        "metadata",
 				Description: "A name-value pair that represents queue metadata.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Queue.ListQueueProperties.Metadata"),
+				Transform:   transform.FromField("Metadata"),
 			},
 
 			// Steampipe standard columns
@@ -85,7 +81,7 @@ func tableAzureStorageQueue(_ context.Context) *plugin.Table {
 				Name:        "akas",
 				Description: ColumnDescriptionAkas,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Queue.ID").Transform(idToAkas),
+				Transform:   transform.FromField("ID").Transform(idToAkas),
 			},
 
 			// Azure standard columns
@@ -99,131 +95,159 @@ func tableAzureStorageQueue(_ context.Context) *plugin.Table {
 				Name:        "resource_group",
 				Description: ColumnDescriptionResourceGroup,
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Queue.ID").Transform(extractResourceGroupFromID),
+				Transform:   transform.FromField("ResourceGroup"),
 			},
 		}),
 	}
 }
 
+type QueueInfo = struct {
+	Metadata           map[string]string
+	Name               string
+	ID                 string
+	Type               string
+	StorageAccountName string
+	ResourceGroup      string
+	SubscriptionID     string
+}
+
 //// LIST FUNCTION
 
-func listStorageQueues(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	// Get the details of storage account
-	account := h.Item.(*storageAccountInfo)
+func listStorageQueues(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listStorageQueues")
 
-	// Queue is not supported for the account if storage type is FileStorage or BlockBlobStorage
-	if account.Account.Kind == "FileStorage" || account.Account.Kind == "BlockBlobStorage" {
-		return nil, nil
+	resourceGroup := d.EqualsQualString("resource_group")
+	storageAccountName := d.EqualsQualString("storage_account_name")
+
+	if resourceGroup == "" {
+		return nil, fmt.Errorf("you must specify `resource_group` in the query parameter to query this table")
 	}
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
-	if err != nil {
-		return nil, err
+	if storageAccountName == "" {
+		return nil, fmt.Errorf("you must specify `storage_account_name` in the query parameter to query this table")
 	}
-	subscriptionID := session.SubscriptionID
 
-	storageClient := storage.NewQueueClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	result, err := storageClient.List(ctx, *account.ResourceGroup, *account.Name, "", "")
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		/*
-		* For storage account type 'Page Blob' we are getting the kind value as 'StorageV2'.
-		* Storage account type 'Page Blob' does not support table, so we are getting 'FeatureNotSupportedForAccount'/'OperationNotAllowedOnKind' error.
-		* With same kind(StorageV2) of storage account, we my have different type(File Share) of storage account so we need to handle this particular error.
-		 */
-		if strings.Contains(err.Error(), "FeatureNotSupportedForAccount") || strings.Contains(err.Error(), "OperationNotAllowedOnKind") {
-			return nil, nil
-		}
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	for _, queue := range result.Values() {
-		d.StreamListItem(ctx, &queueInfo{queue, account.Name, queue.Name, account.ResourceGroup, account.Account.Location})
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
+	// Create client
+	client, err := armstorage.NewQueueClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating queues client", "client_error", err)
+		return nil, err
+	}
+
+	// Limiting the results
+	limit := d.QueryContext.Limit
+	maxResult := "1000"
+	if d.QueryContext.Limit != nil {
+		if *limit < 1000 {
+			maxResult = types.IntToString(*limit)
 		}
 	}
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListPager(resourceGroup, storageAccountName, &armstorage.QueueClientListOptions{
+		Maxpagesize: &maxResult,
+	})
+
+	for pager.More() {
+		// apply rate limiting
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
-		for _, queue := range result.Values() {
-			d.StreamListItem(ctx, queue)
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+
+		for _, v := range resp.Value {
+			metadata := make(map[string]string)
+			for key, value := range v.QueueProperties.Metadata {
+				metadata[key] = *value
+			}
+			d.StreamListItem(ctx, &QueueInfo{
+				Metadata:           metadata,
+				Name:               *v.Name,
+				ID:                 *v.ID,
+				Type:               *v.Type,
+				StorageAccountName: storageAccountName,
+				ResourceGroup:      resourceGroup,
+				SubscriptionID:     session.SubscriptionID,
+			})
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
 	}
 
-	return nil, err
+	return nil, nil
 }
 
-//// HYDRATE FUNCTIONS
+//// GET FUNCTION
 
-func getStorageQueue(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getStorageQueue")
+func getStorageQueue(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getStorageQueue")
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
-	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
+	resourceGroup := d.EqualsQualString("resource_group")
+	storageAccountName := d.EqualsQualString("account_name")
+	name := d.EqualsQualString("name")
 
-	name := d.EqualsQuals["name"].GetStringValue()
-	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
-	accountName := d.EqualsQuals["storage_account_name"].GetStringValue()
-
-	storageClient := storage.NewAccountsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	storageDetails, err := storageClient.GetProperties(ctx, resourceGroup, accountName, "")
-
-	if err != nil {
-		return nil, err
+	if resourceGroup == "" {
+		return nil, fmt.Errorf("you must specify `resource_group` in the query parameter to query this table")
 	}
 
-	location := storageDetails.Location
+	if storageAccountName == "" {
+		return nil, fmt.Errorf("you must specify `account_name` in the query parameter to query this table")
+	}
 
-	queueClient := storage.NewQueueClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	queueClient.Authorizer = session.Authorizer
+	if name == "" {
+		return nil, fmt.Errorf("you must specify `name` in the query parameter to query this table")
+	}
 
-	op, err := queueClient.Get(ctx, resourceGroup, accountName, name)
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	if op.QueueProperties != nil {
-		return &queueInfo{
-			Queue: storage.ListQueue{
-				Name: op.Name,
-				ID:   op.ID,
-				Type: op.Type,
-				ListQueueProperties: &storage.ListQueueProperties{
-					Metadata: op.QueueProperties.Metadata,
-				},
-			},
-			Account:       &accountName,
-			Name:          &name,
-			ResourceGroup: &resourceGroup,
-			Location:      location,
-		}, nil
+	// Create client
+	client, err := armstorage.NewQueueClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating file shares client", "client_error", err)
+		return nil, err
 	}
 
-	return nil, nil
+	resp, err := client.Get(ctx, resourceGroup, storageAccountName, name, nil)
+	if err != nil {
+		logger.Error("error getting storage container", "api_error", err)
+		return nil, err
+	}
+
+	if resp.QueueProperties == nil {
+		return nil, nil // No queue found
+	}
+
+	metadata := make(map[string]string)
+	for key, value := range resp.QueueProperties.Metadata {
+		metadata[key] = *value
+	}
+
+	return &QueueInfo{
+		Metadata:           metadata,
+		Name:               *resp.Name,
+		ID:                 *resp.ID,
+		Type:               *resp.Type,
+		StorageAccountName: storageAccountName,
+		ResourceGroup:      resourceGroup,
+		SubscriptionID:     session.SubscriptionID,
+	}, nil
 }
