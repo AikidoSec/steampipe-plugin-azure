@@ -2,21 +2,13 @@ package azure
 
 import (
 	"context"
-	"strings"
+	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 )
-
-type tableInfo = struct {
-	Table         storage.Table
-	Account       *string
-	Name          *string
-	ResourceGroup *string
-	Location      *string
-}
 
 //// TABLE DEFINITION
 
@@ -36,8 +28,11 @@ func tableAzureStorageTable(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			ParentHydrate: listStorageAccounts,
-			Hydrate:       listStorageTables,
+			Hydrate: listStorageTables,
+			KeyColumns: plugin.KeyColumnSlice{
+				{Name: "resource_group", Require: plugin.Required},
+				{Name: "storage_account_name", Require: plugin.Required},
+			},
 			Tags: map[string]string{
 				"service": "Microsoft.Storage",
 				"action":  "storageAccounts/tableServices/tables/read",
@@ -53,19 +48,19 @@ func tableAzureStorageTable(_ context.Context) *plugin.Table {
 				Name:        "id",
 				Description: "Contains ID to identify a table service uniquely",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Table.ID"),
+				Transform:   transform.FromField("ID"),
 			},
 			{
 				Name:        "storage_account_name",
 				Description: "An unique read-only string that changes whenever the resource is updated",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Account"),
+				Transform:   transform.FromField("StorageAccountName"),
 			},
 			{
-				Name:        "type",
+				Name:        "signed_identifiers",
 				Description: "Type of the resource",
-				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Table.Type"),
+				Type:        proto.ColumnType_JSON,
+				Transform:   transform.FromField("Table.SignedIdentifiers"),
 			},
 
 			// Steampipe standard columns
@@ -79,7 +74,7 @@ func tableAzureStorageTable(_ context.Context) *plugin.Table {
 				Name:        "akas",
 				Description: ColumnDescriptionAkas,
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Table.ID").Transform(idToAkas),
+				Transform:   transform.FromField("ID").Transform(idToAkas),
 			},
 
 			// Azure standard columns
@@ -99,115 +94,133 @@ func tableAzureStorageTable(_ context.Context) *plugin.Table {
 	}
 }
 
-//// FETCH FUNCTIONS
+type TableInfo = struct {
+	Table              armstorage.TableProperties
+	Name               string
+	ID                 string
+	Type               string
+	StorageAccountName string
+	ResourceGroup      string
+	SubscriptionID     string
+}
 
-func listStorageTables(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	// Get the details of storage account
-	account := h.Item.(*storageAccountInfo)
+//// LIST FUNCTION
 
-	// Table is not supported for the account if storage type is FileStorage or BlockBlobStorage
-	if account.Account.Kind == "FileStorage" || account.Account.Kind == "BlockBlobStorage" {
-		return nil, nil
+func listStorageTables(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listStorageTables")
+
+	resourceGroup := d.EqualsQualString("resource_group")
+	storageAccountName := d.EqualsQualString("storage_account_name")
+
+	if resourceGroup == "" {
+		return nil, fmt.Errorf("you must specify `resource_group` in the query parameter to query this table")
 	}
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	if storageAccountName == "" {
+		return nil, fmt.Errorf("you must specify `storage_account_name` in the query parameter to query this table")
+	}
+
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
 
-	storageClient := storage.NewTableClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	result, err := storageClient.List(ctx, *account.ResourceGroup, *account.Name)
+	// Create client
+	client, err := armstorage.NewTableClient(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
-		/*
-		* For storage account type 'Page Blob' we are getting the kind value as 'StorageV2'.
-		* Storage account type 'Page Blob' does not support table, so we are getting 'FeatureNotSupportedForAccount'/'OperationNotAllowedOnKind' error.
-		* With same kind(StorageV2) of storage account, we my have different type(File Share) of storage account so we need to handle this particular error.
-		 */
-		if strings.Contains(err.Error(), "FeatureNotSupportedForAccount") || strings.Contains(err.Error(), "OperationNotAllowedOnKind") {
-			return nil, nil
-		}
+		logger.Error("error while creating tables client", "client_error", err)
 		return nil, err
 	}
 
-	for _, table := range result.Values() {
-		d.StreamListItem(ctx, &tableInfo{table, account.Name, table.Name, account.ResourceGroup, account.Account.Location})
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
-	}
+	pager := client.NewListPager(resourceGroup, storageAccountName, nil)
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	for pager.More() {
+		// apply rate limiting
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
-		for _, table := range result.Values() {
-			d.StreamListItem(ctx, table)
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, &TableInfo{
+				Table:              *v.TableProperties,
+				Name:               *v.Name,
+				ID:                 *v.ID,
+				Type:               *v.Type,
+				StorageAccountName: storageAccountName,
+				ResourceGroup:      resourceGroup,
+				SubscriptionID:     session.SubscriptionID,
+			})
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
 	}
 
-	return nil, err
+	return nil, nil
 }
 
-//// HYDRATE FUNCTIONS
+//// GET FUNCTION
 
-func getStorageTable(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getStorageTable")
+func getStorageTable(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getStorageTable")
 
-	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
-	accountName := d.EqualsQuals["storage_account_name"].GetStringValue()
-	name := d.EqualsQuals["name"].GetStringValue()
+	resourceGroup := d.EqualsQualString("resource_group")
+	storageAccountName := d.EqualsQualString("account_name")
+	name := d.EqualsQualString("name")
 
-	// length of the AccountName must be greater than, or equal to 3, and
-	// length of the ResourceGroupName must be greater than 1, and
-	// length of table name must be greater than, or equal to 3
-	if len(accountName) < 3 || len(resourceGroup) < 1 || len(name) < 3 {
-		return nil, nil
+	if resourceGroup == "" {
+		return nil, fmt.Errorf("you must specify `resource_group` in the query parameter to query this table")
 	}
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
-	if err != nil {
-		return nil, err
+	if storageAccountName == "" {
+		return nil, fmt.Errorf("you must specify `account_name` in the query parameter to query this table")
 	}
-	subscriptionID := session.SubscriptionID
 
-	storageClient := storage.NewAccountsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	storageClient.Authorizer = session.Authorizer
+	if name == "" {
+		return nil, fmt.Errorf("you must specify `name` in the query parameter to query this table")
+	}
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &storageClient, d.Connection)
-
-	storageDetails, err := storageClient.GetProperties(ctx, resourceGroup, accountName, "")
-
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	location := storageDetails.Location
-
-	tableClient := storage.NewTableClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	tableClient.Authorizer = session.Authorizer
-
-	op, err := tableClient.Get(ctx, resourceGroup, accountName, name)
+	// Create client
+	client, err := armstorage.NewTableClient(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
+		logger.Error("error while creating file shares client", "client_error", err)
 		return nil, err
 	}
 
-	return &tableInfo{op, &accountName, op.Name, &resourceGroup, location}, nil
+	resp, err := client.Get(ctx, resourceGroup, storageAccountName, name, nil)
+	if err != nil {
+		logger.Error("error getting storage container", "api_error", err)
+		return nil, err
+	}
+
+	if resp.TableProperties == nil {
+		return nil, nil // No table found
+	}
+
+	return &TableInfo{
+		Table:              *resp.TableProperties,
+		Name:               *resp.Name,
+		ID:                 *resp.ID,
+		Type:               *resp.Type,
+		StorageAccountName: storageAccountName,
+		ResourceGroup:      resourceGroup,
+		SubscriptionID:     session.SubscriptionID,
+	}, nil
 }

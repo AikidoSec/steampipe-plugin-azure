@@ -2,14 +2,13 @@ package azure
 
 import (
 	"context"
-	"strings"
+	"fmt"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/storage/mgmt/storage"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/turbot/go-kit/types"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
-	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
-
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
+	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
 )
 
 //// TABLE DEFINITION
@@ -19,7 +18,7 @@ func tableAzureStorageShareFile(_ context.Context) *plugin.Table {
 		Name:        "azure_storage_share_file",
 		Description: "Azure Storage Share File",
 		Get: &plugin.GetConfig{
-			KeyColumns: plugin.AllColumns([]string{"name", "resource_group", "storage_account_name"}),
+			KeyColumns: plugin.AllColumns([]string{"name", "storage_account_name", "resource_group"}),
 			Hydrate:    getStorageAccountsFileShare,
 			Tags: map[string]string{
 				"service": "Microsoft.Storage",
@@ -30,8 +29,11 @@ func tableAzureStorageShareFile(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			ParentHydrate: listStorageAccounts,
-			Hydrate:       listStorageAccountsFileShares,
+			Hydrate: listStorageAccountsFileShares,
+			KeyColumns: plugin.KeyColumnSlice{
+				{Name: "resource_group", Require: plugin.Required},
+				{Name: "storage_account_name", Require: plugin.Required},
+			},
 			Tags: map[string]string{
 				"service": "Microsoft.Storage",
 				"action":  "fileServices/shares/read",
@@ -69,7 +71,7 @@ func tableAzureStorageShareFile(_ context.Context) *plugin.Table {
 				Name:        "access_tier_change_time",
 				Type:        proto.ColumnType_TIMESTAMP,
 				Description: "Indicates the last modification time for share access tier.",
-				Transform:   transform.FromField("FileShareProperties.AccessTierChangeTime").Transform(convertDateToTime),
+				Transform:   transform.FromField("FileShareProperties.AccessTierChangeTime").Transform(transform.NullIfZeroValue),
 			},
 			{
 				Name:        "access_tier_status",
@@ -81,7 +83,7 @@ func tableAzureStorageShareFile(_ context.Context) *plugin.Table {
 				Name:        "last_modified_time",
 				Type:        proto.ColumnType_TIMESTAMP,
 				Description: "Returns the date and time the share was last modified.",
-				Transform:   transform.FromField("FileShareProperties.LastModifiedTime").Transform(convertDateToTime),
+				Transform:   transform.FromField("FileShareProperties.LastModifiedTime").Transform(transform.NullIfZeroValue),
 			},
 			{
 				Name:        "deleted",
@@ -93,7 +95,7 @@ func tableAzureStorageShareFile(_ context.Context) *plugin.Table {
 				Name:        "deleted_time",
 				Type:        proto.ColumnType_TIMESTAMP,
 				Description: "The deleted time if the share was deleted.",
-				Transform:   transform.FromField("FileShareProperties.DeletedTime").Transform(convertDateToTime),
+				Transform:   transform.FromField("FileShareProperties.DeletedTime").Transform(transform.NullIfZeroValue),
 			},
 			{
 				Name:        "enabled_protocols",
@@ -157,150 +159,147 @@ func tableAzureStorageShareFile(_ context.Context) *plugin.Table {
 				Name:        "resource_group",
 				Description: ColumnDescriptionResourceGroup,
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("ResourceGroup").Transform(toLower),
+				Transform:   transform.FromField("ResourceGroup"),
 			},
 		}),
 	}
 }
 
 type FileShareInfo struct {
-	storage.FileShareProperties
+	armstorage.FileShareProperties
 	Name               string
 	ID                 string
 	Type               string
 	StorageAccountName string
 	ResourceGroup      string
+	SubscriptionID     string
 }
 
-//// LIST FUNCTION
-
-func listStorageAccountsFileShares(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	storageAccount := h.Item.(*storageAccountInfo)
-
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+// LIST FUNCTION
+func listStorageAccountsFileShares(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
 	logger := plugin.Logger(ctx)
+	logger.Trace("listStorageAccountsFileShares")
+
+	resourceGroup := d.EqualsQualString("resource_group")
+	storageAccountName := d.EqualsQualString("storage_account_name")
+
+	if resourceGroup == "" {
+		return nil, fmt.Errorf("you must specify `resource_group` in the query parameter to query this table")
+	}
+
+	if storageAccountName == "" {
+		return nil, fmt.Errorf("you must specify `storage_account_name` in the query parameter to query this table")
+	}
+
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		logger.Error("listStorageAccountsFileShare", "get session error", err)
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
-	if storageAccount.Account.Kind == "BlockBlobStorage" {
-		return nil, nil
+	// Create client
+	client, err := armstorage.NewFileSharesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating file shares client", "client_error", err)
+		return nil, err
 	}
-
-	subscriptionID := session.SubscriptionID
-	fileShareCLient := storage.NewFileSharesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	fileShareCLient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &fileShareCLient, d.Connection)
 
 	// Limiting the results
 	limit := d.QueryContext.Limit
-	maxResult := "100"
+	maxResult := "1000"
 	if d.QueryContext.Limit != nil {
-		if *limit < 100 {
+		if *limit < 1000 {
 			maxResult = types.IntToString(*limit)
 		}
 	}
 
-	result, err := fileShareCLient.List(ctx, *storageAccount.ResourceGroup, *storageAccount.Name, maxResult, "", "")
-	if err != nil {
-		logger.Error("listStorageAccountsFileShare", "api error", err)
+	pager := client.NewListPager(resourceGroup, storageAccountName, &armstorage.FileSharesClientListOptions{
+		Maxpagesize: &maxResult,
+	})
 
-		// This api throws FeatureNotSupportedForAccount or OperationNotAllowedOnKind error if the storage account kind is not File Share
-		if strings.Contains(err.Error(), "FeatureNotSupportedForAccount") || strings.Contains(err.Error(), "OperationNotAllowedOnKind") {
-			return nil, nil
-		}
-
-		return nil, err
-	}
-
-	for _, fileShare := range result.Values() {
-		d.StreamListItem(ctx, &FileShareInfo{
-			FileShareProperties: *fileShare.FileShareProperties,
-			Name:                *fileShare.Name,
-			ID:                  *fileShare.ID,
-			Type:                *fileShare.Type,
-			StorageAccountName:  *storageAccount.Name,
-			ResourceGroup:       *storageAccount.ResourceGroup,
-		})
-
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
-	}
-
-	for result.NotDone() {
-		// Wait for rate limiting
+	for pager.More() {
+		// apply rate limiting
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, fileShare := range result.Values() {
+		for _, fileShare := range resp.Value {
 			d.StreamListItem(ctx, &FileShareInfo{
-				FileShareProperties: *fileShare.FileShareProperties,
+				FileShareProperties: *fileShare.Properties,
 				Name:                *fileShare.Name,
 				ID:                  *fileShare.ID,
 				Type:                *fileShare.Type,
-				StorageAccountName:  *storageAccount.Name,
-				ResourceGroup:       *storageAccount.ResourceGroup,
+				StorageAccountName:  storageAccountName,
+				ResourceGroup:       resourceGroup,
+				SubscriptionID:      session.SubscriptionID,
 			})
 
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
 		}
 	}
 
-	return nil, err
+	return nil, nil
 }
 
-//// HYDRATE FUNCTIONS
+//// GET FUNCTION
 
-func getStorageAccountsFileShare(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getStorageAccountsFileShare")
-
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+func getStorageAccountsFileShare(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
 	logger := plugin.Logger(ctx)
-	if err != nil {
-		logger.Error("getStorageAccountsFileShare", "get session error", err)
-		return nil, err
-	}
+	logger.Trace("getStorageAccountsFileShare")
 
 	resourceGroup := d.EqualsQualString("resource_group")
 	storageAccountName := d.EqualsQualString("storage_account_name")
 	name := d.EqualsQualString("name")
 
-	if strings.Trim(name, " ") == "" || strings.Trim(resourceGroup, " ") == "" || strings.Trim(storageAccountName, " ") == "" {
-		return nil, nil
+	if resourceGroup == "" {
+		return nil, fmt.Errorf("you must specify `resource_group` in the query parameter to query this table")
 	}
 
-	subscriptionID := session.SubscriptionID
-	fileShareCLient := storage.NewFileSharesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	fileShareCLient.Authorizer = session.Authorizer
+	if storageAccountName == "" {
+		return nil, fmt.Errorf("you must specify `storage_account_name` in the query parameter to query this table")
+	}
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &fileShareCLient, d.Connection)
+	if name == "" {
+		return nil, fmt.Errorf("you must specify `name` in the query parameter to query this table")
+	}
 
-	result, err := fileShareCLient.Get(ctx, resourceGroup, storageAccountName, name, "", "")
-
+	// Create session
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		plugin.Logger(ctx).Error("azure_role_assignment.listIamRoleAssignments", "session_error", err)
 		return nil, err
 	}
 
+	// Create client
+	client, err := armstorage.NewFileSharesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		logger.Error("error while creating file shares client", "client_error", err)
+		return nil, err
+	}
+
+	fs, err := client.Get(ctx, resourceGroup, storageAccountName, name, nil)
+	if err != nil {
+		logger.Error("error while getting file share", "file_share_error", err)
+		return nil, err
+	}
+
+	if fs.FileShareProperties == nil {
+		return nil, nil // No file share properties found, return nil
+	}
+
 	return &FileShareInfo{
-		FileShareProperties: *result.FileShareProperties,
-		Name:                *result.Name,
-		ID:                  *result.ID,
-		Type:                *result.Type,
+		FileShareProperties: *fs.FileShareProperties,
+		Name:                *fs.Name,
+		ID:                  *fs.ID,
+		Type:                *fs.Type,
 		StorageAccountName:  storageAccountName,
 		ResourceGroup:       resourceGroup,
 	}, nil
