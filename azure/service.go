@@ -224,6 +224,11 @@ func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *Se
 		ClientOptions:  &clientOptions,
 	}
 
+	expireMins := time.Minute * 55
+
+	logger.Debug("Session saved in cache", "expiration_time", expireMins)
+	d.ConnectionManager.Cache.SetWithTTL(cacheKey, sess, expireMins)
+
 	return sess, err
 }
 
