@@ -60,7 +60,7 @@ func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *Se
 	logger := plugin.Logger(ctx)
 
 	cacheKey := "GetNewSessionUpdated"
-	if cachedData, ok := d.ConnectionManager.Cache.Get(cacheKey); ok {
+	if cachedData, ok := d.ConnectionCache.Get(ctx, cacheKey); ok {
 		return cachedData.(*SessionNew), nil
 	}
 
@@ -227,7 +227,10 @@ func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *Se
 	expireMins := time.Minute * 55
 
 	logger.Debug("Session saved in cache", "expiration_time", expireMins)
-	d.ConnectionManager.Cache.SetWithTTL(cacheKey, sess, expireMins)
+	if err := d.ConnectionCache.SetWithTTL(ctx, cacheKey, sess, expireMins); err != nil {
+		logger.Error("SetWithTTL", "error", err)
+		return nil, fmt.Errorf("error setting session in cache: %w", err)
+	}
 
 	return sess, err
 }
