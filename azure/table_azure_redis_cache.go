@@ -240,7 +240,7 @@ func listRedisCaches(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 
 	pager := client.NewListBySubscriptionPager(nil)
 	for pager.More() {
-		// apply rate limiting
+		// Wait for rate limiter
 		d.WaitForListRateLimit(ctx)
 
 		resp, err := pager.NextPage(ctx)
@@ -266,7 +266,7 @@ func listRedisCaches(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 
 func getRedisCache(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
 	logger := plugin.Logger(ctx)
-	logger.Trace("listRedisCaches")
+	logger.Trace("getRedisCache")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -278,7 +278,7 @@ func getRedisCache(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDa
 
 	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		logger.Error("azure_sql_server.listSQLServer", "session_error", err)
+		logger.Error("azure_redis_cache.getRedisCache", "session_error", err)
 		return nil, err
 	}
 
