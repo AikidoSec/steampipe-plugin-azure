@@ -3,7 +3,7 @@ package azure
 import (
 	"context"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/redis/mgmt/redis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis/v3"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -55,7 +55,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "provisioning_state",
 				Description: "The provisioning state of the redis instance at the time the operation was called. Valid values are: 'Creating', 'Deleting', 'Disabled', 'Failed', 'Linking', 'Provisioning', 'RecoveringScaleFailure', 'Scaling', 'Succeeded', 'Unlinking', 'Unprovisioning', and 'Updating'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.ProvisioningState").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.ProvisioningState").Transform(transformToString),
 			},
 			{
 				Name:        "redis_version",
@@ -79,7 +79,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "minimum_tls_version",
 				Description: "Specifies the TLS version requires to connect.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.MinimumTLSVersion").Transform(transform.ToString).Transform(transform.NullIfZeroValue),
+				Transform:   transform.FromField("Properties.MinimumTLSVersion").Transform(transformToString),
 			},
 			{
 				Name:        "port",
@@ -91,7 +91,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "public_network_access",
 				Description: "Indicates whether or not public endpoint access is allowed for this cache. Valid values are: 'Enabled', 'Disabled'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.PublicNetworkAccess").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.PublicNetworkAccess").Transform(transformToString),
 			},
 			{
 				Name:        "sku_capacity",
@@ -103,13 +103,13 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "sku_family",
 				Description: "The SKU family to use.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.Sku.Family").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.Sku.Family").Transform(transformToString),
 			},
 			{
 				Name:        "sku_name",
 				Description: "The type of Redis cache to deploy.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.Sku.Name").Transform(transformToString),
 			},
 			{
 				Name:        "ssl_port",
@@ -222,47 +222,37 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 //// LIST FUNCTION
 
 func listRedisCaches(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listRedisCaches")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listRedisCaches")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		logger.Error("azure_redis_cache.listRedisCaches", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := redis.NewClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	result, err := client.ListBySubscription(ctx)
+	f, err := armredis.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, cache := range result.Values() {
-		d.StreamListItem(ctx, cache)
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
-	}
+	client := f.NewClient()
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListBySubscriptionPager(nil)
+	for pager.More() {
+		// Wait for rate limiter
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, cache := range result.Values() {
-			d.StreamListItem(ctx, cache)
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
@@ -274,8 +264,9 @@ func listRedisCaches(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 
 //// HYDRATE FUNCTIONS
 
-func getRedisCache(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getRedisCache")
+func getRedisCache(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getRedisCache")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -285,20 +276,22 @@ func getRedisCache(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, nil
 	}
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_redis_cache.getRedisCache", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armredis.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := redis.NewClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewClient()
 
-	op, err := client.Get(ctx, resourceGroup, name)
+	op, err := client.Get(ctx, resourceGroup, name, nil)
 	if err != nil {
+		logger.Error("azure_redis_cache.getRedisCache", "api_error", err, "resource_group", resourceGroup, "name", name)
 		return nil, err
 	}
 
