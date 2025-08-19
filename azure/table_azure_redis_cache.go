@@ -3,7 +3,7 @@ package azure
 import (
 	"context"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/redis/mgmt/redis"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis/v3"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -222,47 +222,37 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 //// LIST FUNCTION
 
 func listRedisCaches(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listRedisCaches")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listRedisCaches")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		logger.Error("azure_redis_cache.listRedisCaches", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := redis.NewClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	result, err := client.ListBySubscription(ctx)
+	f, err := armredis.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, cache := range result.Values() {
-		d.StreamListItem(ctx, cache)
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
-	}
+	client := f.NewClient()
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListBySubscriptionPager(nil)
+	for pager.More() {
+		// apply rate limiting
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, cache := range result.Values() {
-			d.StreamListItem(ctx, cache)
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
@@ -274,8 +264,9 @@ func listRedisCaches(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydrate
 
 //// HYDRATE FUNCTIONS
 
-func getRedisCache(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getRedisCache")
+func getRedisCache(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listRedisCaches")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -285,20 +276,22 @@ func getRedisCache(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateDa
 		return nil, nil
 	}
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_sql_server.listSQLServer", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armredis.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := redis.NewClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewClient()
 
-	op, err := client.Get(ctx, resourceGroup, name)
+	op, err := client.Get(ctx, resourceGroup, name, nil)
 	if err != nil {
+		logger.Error("azure_redis_cache.getRedisCache", "api_error", err, "resource_group", resourceGroup, "name", name)
 		return nil, err
 	}
 
