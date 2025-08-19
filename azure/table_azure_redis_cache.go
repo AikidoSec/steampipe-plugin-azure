@@ -55,7 +55,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "provisioning_state",
 				Description: "The provisioning state of the redis instance at the time the operation was called. Valid values are: 'Creating', 'Deleting', 'Disabled', 'Failed', 'Linking', 'Provisioning', 'RecoveringScaleFailure', 'Scaling', 'Succeeded', 'Unlinking', 'Unprovisioning', and 'Updating'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.ProvisioningState").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.ProvisioningState").Transform(transformToString),
 			},
 			{
 				Name:        "redis_version",
@@ -79,7 +79,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "minimum_tls_version",
 				Description: "Specifies the TLS version requires to connect.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.MinimumTLSVersion").Transform(transform.ToString).Transform(transform.NullIfZeroValue),
+				Transform:   transform.FromField("Properties.MinimumTLSVersion").Transform(transformToString),
 			},
 			{
 				Name:        "port",
@@ -91,7 +91,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "public_network_access",
 				Description: "Indicates whether or not public endpoint access is allowed for this cache. Valid values are: 'Enabled', 'Disabled'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.PublicNetworkAccess").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.PublicNetworkAccess").Transform(transformToString),
 			},
 			{
 				Name:        "sku_capacity",
@@ -103,13 +103,13 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "sku_family",
 				Description: "The SKU family to use.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.Sku.Family").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.Sku.Family").Transform(transformToString),
 			},
 			{
 				Name:        "sku_name",
 				Description: "The type of Redis cache to deploy.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.Sku.Name").Transform(transformToString),
 			},
 			{
 				Name:        "ssl_port",
