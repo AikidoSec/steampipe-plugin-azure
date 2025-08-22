@@ -214,12 +214,6 @@ func tableAzureKubernetesCluster(_ context.Context) *plugin.Table {
 				Transform:   transform.FromField("Properties.WindowsProfile"),
 			},
 			{
-				Name:        "auto_upgrade_profile",
-				Description: "Profile of auto upgrade configuration.",
-				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Properties.AutoUpgradeProfile"),
-			},
-			{
 				Name:        "security_profile",
 				Description: "Profile of security configuration.",
 				Type:        proto.ColumnType_JSON,
