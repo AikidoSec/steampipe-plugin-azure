@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/containerregistry/mgmt/containerregistry"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -78,97 +78,97 @@ func tableAzureContainerRegistry(_ context.Context) *plugin.Table {
 				Name:        "provisioning_state",
 				Description: "The provisioning state of the container registry at the time the operation was called. Valid values are: 'Creating', 'Updating', 'Deleting', 'Succeeded', 'Failed', 'Canceled'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.ProvisioningState").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.ProvisioningState").Transform(transformToString),
 			},
 			{
 				Name:        "creation_date",
 				Description: "The creation date of the container registry.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("RegistryProperties.CreationDate").Transform(convertDateToTime),
+				Transform:   transform.FromField("Properties.CreationDate"),
 			},
 			{
 				Name:        "admin_user_enabled",
 				Description: "Indicates whether the admin user is enabled, or not.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("RegistryProperties.AdminUserEnabled"),
+				Transform:   transform.FromField("Properties.AdminUserEnabled"),
 			},
 			{
 				Name:        "data_endpoint_enabled",
 				Description: "Enable a single data endpoint per region for serving data.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("RegistryProperties.DataEndpointEnabled"),
+				Transform:   transform.FromField("Properties.DataEndpointEnabled"),
 			},
 			{
 				Name:        "login_server",
 				Description: "The URL that can be used to log into the container registry.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.LoginServer"),
+				Transform:   transform.FromField("Properties.LoginServer"),
 			},
 			{
 				Name:        "network_rule_bypass_options",
 				Description: "Indicates whether to allow trusted Azure services to access a network restricted registry. Valid values are: 'AzureServices', 'None'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.NetworkRuleBypassOptions").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.NetworkRuleBypassOptions").Transform(transformToString),
 			},
 			{
 				Name:        "public_network_access",
 				Description: "Indicates whether or not public network access is allowed for the container registry. Valid values are: 'Enabled', 'Disabled'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.PublicNetworkAccess").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.PublicNetworkAccess").Transform(transformToString),
 			},
 			{
 				Name:        "sku_name",
 				Description: "The SKU name of the container registry. Required for registry creation. Valid values are: 'Classic', 'Basic', 'Standard', 'Premium'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("SKU.Name").Transform(transformToString),
 			},
 			{
 				Name:        "sku_tier",
 				Description: "The SKU tier based on the SKU name. Valid values are: 'Classic', 'Basic', 'Standard', 'Premium'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Tier").Transform(transform.ToString),
+				Transform:   transform.FromField("SKU.Tier").Transform(transformToString),
 			},
 			{
 				Name:        "status",
 				Description: "The current status of the resource.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.Status.DisplayStatus"),
+				Transform:   transform.FromField("Properties.Status.DisplayStatus"),
 			},
 			{
 				Name:        "status_message",
 				Description: "The detailed message for the status, including alerts and error messages.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.Status.Message"),
+				Transform:   transform.FromField("Properties.Status.Message"),
 			},
 			{
 				Name:        "status_timestamp",
 				Description: "The timestamp when the status was changed to the current value.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("RegistryProperties.Status.Timestamp").Transform(convertDateToTime),
+				Transform:   transform.FromField("Properties.Status.Timestamp"),
 			},
 			{
 				Name:        "storage_account_id",
 				Description: "The resource ID of the storage account. Only applicable to Classic SKU.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.StorageAccount.ID"),
+				Transform:   transform.FromField("Properties.StorageAccount.ID"),
 			},
 			{
 				Name:        "zone_redundancy",
 				Description: "Indicates whether or not zone redundancy is enabled for this container registry. Valid values are: 'Enabled', 'Disabled'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("RegistryProperties.ZoneRedundancy").Transform(transform.ToString),
+				Transform:   transform.FromField("Properties.ZoneRedundancy").Transform(transformToString),
 			},
 			{
 				Name:        "data_endpoint_host_names",
 				Description: "A list of host names that will serve data when dataEndpointEnabled is true.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("RegistryProperties.DataEndpointHostNames"),
+				Transform:   transform.FromField("Properties.DataEndpointHostNames"),
 			},
 			{
 				Name:        "encryption",
 				Description: "The encryption settings of container registry.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("RegistryProperties.Encryption"),
+				Transform:   transform.FromField("Properties.Encryption"),
 			},
 			{
 				Name:        "identity",
@@ -186,19 +186,19 @@ func tableAzureContainerRegistry(_ context.Context) *plugin.Table {
 				Name:        "network_rule_set",
 				Description: "The network rule set for a container registry.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("RegistryProperties.NetworkRuleSet"),
+				Transform:   transform.FromField("Properties.NetworkRuleSet"),
 			},
 			{
 				Name:        "policies",
 				Description: "The policies for a container registry.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("RegistryProperties.Policies"),
+				Transform:   transform.FromField("Properties.Policies"),
 			},
 			{
 				Name:        "private_endpoint_connections",
 				Description: "A list of private endpoint connections for a container registry.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("RegistryProperties.PrivateEndpointConnections"),
+				Transform:   transform.FromField("Properties.PrivateEndpointConnections"),
 			},
 			{
 				Name:        "system_data",
@@ -259,47 +259,37 @@ func tableAzureContainerRegistry(_ context.Context) *plugin.Table {
 //// LIST FUNCTION
 
 func listContainerRegistries(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listContainerRegistries")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listContainerRegistries")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
+		logger.Error("azure_container_registry.listContainerRegistries", "session_error", err)
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := containerregistry.NewRegistriesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	result, err := client.List(ctx)
+	f, err := armcontainerregistry.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
 
-	for _, registry := range result.Values() {
-		d.StreamListItem(ctx, registry)
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
-	}
+	client := f.NewRegistriesClient()
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListPager(nil)
+	for pager.More() {
+		// Wait for rate limiter
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, registry := range result.Values() {
-			d.StreamListItem(ctx, registry)
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
@@ -311,8 +301,9 @@ func listContainerRegistries(ctx context.Context, d *plugin.QueryData, _ *plugin
 
 //// HYDRATE FUNCTIONS
 
-func getContainerRegistry(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getContainerRegistry")
+func getContainerRegistry(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getContainerRegistry")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -322,19 +313,20 @@ func getContainerRegistry(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 		return nil, nil
 	}
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_container_registry.getContainerRegistry", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armcontainerregistry.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := containerregistry.NewRegistriesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewRegistriesClient()
 
-	op, err := client.Get(ctx, resourceGroup, name)
+	op, err := client.Get(ctx, resourceGroup, name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -343,26 +335,28 @@ func getContainerRegistry(ctx context.Context, d *plugin.QueryData, h *plugin.Hy
 }
 
 func listContainerRegistryLoginCredentials(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listContainerRegistryLoginCredentials")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listContainerRegistryLoginCredentials")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_container_registry.listContainerRegistryLoginCredentials", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armcontainerregistry.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := containerregistry.NewRegistriesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewRegistriesClient()
 
-	data := h.Item.(containerregistry.Registry)
+	data := h.Item.(*armcontainerregistry.Registry)
 	resourceGroup := strings.Split(*data.ID, "/")[4]
 
-	op, err := client.ListCredentials(ctx, resourceGroup, *data.Name)
+	op, err := client.ListCredentials(ctx, resourceGroup, *data.Name, nil)
 	if err != nil {
-		if strings.Contains(err.Error(), "UnAuthorizedForCredentialOperations") {
+		if strings.Contains(err.Error(), "UnauthorizedForCredentialOperations") {
 			return nil, nil
 		}
 		return nil, err
@@ -372,61 +366,71 @@ func listContainerRegistryLoginCredentials(ctx context.Context, d *plugin.QueryD
 }
 
 func listContainerRegistryWebhooks(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listContainerRegistryWebhooks")
+
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_container_registry.listContainerRegistryWebhooks", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armcontainerregistry.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := containerregistry.NewWebhooksClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewWebhooksClient()
 
-	data := h.Item.(containerregistry.Registry)
+	data := h.Item.(*armcontainerregistry.Registry)
 	resourceGroup := strings.Split(*data.ID, "/")[4]
 
-	op, err := client.List(ctx, resourceGroup, *data.Name)
-	if err != nil {
-		plugin.Logger(ctx).Error("azure_container_registry.listContainerRegistryWebhooks", "api_error", err)
-		return nil, err
-	}
+	webhooks := make([]*armcontainerregistry.Webhook, 0)
 
-	webhooks := op.Values()
+	pager := client.NewListPager(resourceGroup, *data.Name, nil)
+	for pager.More() {
+		// Wait for rate limiter
+		d.WaitForListRateLimit(ctx)
 
-	if op.NotDone() {
-		err = op.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
-			plugin.Logger(ctx).Error("azure_container_registry.listContainerRegistryWebhooks", "api_paging_error", err)
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		webhooks = append(webhooks, op.Values()...)
-	}
+		for _, v := range resp.Value {
+			webhooks = append(webhooks, v)
 
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
+		}
+	}
 	return webhooks, nil
 }
 
 func listContainerRegistryUsages(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listContainerRegistryUsages")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listContainerRegistryUsages")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_container_registry.listContainerRegistryUsages", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armcontainerregistry.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := containerregistry.NewRegistriesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewRegistriesClient()
 
-	data := h.Item.(containerregistry.Registry)
+	data := h.Item.(*armcontainerregistry.Registry)
 	resourceGroup := strings.Split(*data.ID, "/")[4]
 
-	op, err := client.ListUsages(ctx, resourceGroup, *data.Name)
+	op, err := client.ListUsages(ctx, resourceGroup, *data.Name, nil)
 	if err != nil {
 		return nil, err
 	}
