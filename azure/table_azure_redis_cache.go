@@ -67,7 +67,7 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "enable_non_ssl_port",
 				Description: "Specifies whether the non-ssl Redis server port (6379) is enabled.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("Properties.EnableNonSslPort"),
+				Transform:   transform.FromField("Properties.EnableNonSSLPort"),
 			},
 			{
 				Name:        "host_name",
@@ -97,25 +97,25 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Name:        "sku_capacity",
 				Description: "The size of the Redis cache to deploy.",
 				Type:        proto.ColumnType_INT,
-				Transform:   transform.FromField("Properties.Sku.Capacity"),
+				Transform:   transform.FromField("Properties.SKU.Capacity"),
 			},
 			{
 				Name:        "sku_family",
 				Description: "The SKU family to use.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.Sku.Family").Transform(transformToString),
+				Transform:   transform.FromField("Properties.SKU.Family").Transform(transformToString),
 			},
 			{
 				Name:        "sku_name",
 				Description: "The type of Redis cache to deploy.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Properties.Sku.Name").Transform(transformToString),
+				Transform:   transform.FromField("Properties.SKU.Name").Transform(transformToString),
 			},
 			{
 				Name:        "ssl_port",
 				Description: "Specifies the redis SSL port.",
 				Type:        proto.ColumnType_INT,
-				Transform:   transform.FromField("Properties.SslPort"),
+				Transform:   transform.FromField("Properties.SSLPort"),
 			},
 			{
 				Name:        "subnet_id",
