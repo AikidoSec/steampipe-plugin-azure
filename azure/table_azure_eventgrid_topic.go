@@ -5,6 +5,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/eventgrid/mgmt/eventgrid"
 	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/monitor/mgmt/insights"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventgrid/armeventgrid/v2"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -65,7 +66,7 @@ func tableAzureEventGridTopic(_ context.Context) *plugin.Table {
 				Name:        "provisioning_state",
 				Description: "Provisioning state of the event grid topic resource. Possible values include: 'Creating', 'Updating', 'Deleting', 'Succeeded', 'Canceled', 'Failed'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("TopicProperties.ProvisioningState"),
+				Transform:   transform.FromField("Properties.ProvisioningState"),
 			},
 			{
 				Name:        "created_at",
@@ -89,20 +90,20 @@ func tableAzureEventGridTopic(_ context.Context) *plugin.Table {
 				Name:        "disable_local_auth",
 				Description: "This boolean is used to enable or disable local auth. Default value is false. When the property is set to true, only AAD token will be used to authenticate if user is allowed to publish to the topic.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("TopicProperties.DisableLocalAuth"),
+				Transform:   transform.FromField("Properties.DisableLocalAuth"),
 				Default:     false,
 			},
 			{
 				Name:        "endpoint",
 				Description: "Endpoint for the event grid topic resource which is used for publishing the events.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("TopicProperties.Endpoint"),
+				Transform:   transform.FromField("Properties.Endpoint"),
 			},
 			{
 				Name:        "input_schema",
 				Description: "This determines the format that event grid should expect for incoming events published to the event grid topic resource. Possible values include: 'EventGridSchema', 'CustomEventSchema', 'CloudEventSchemaV10'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("TopicProperties.InputSchema"),
+				Transform:   transform.FromField("Properties.InputSchema"),
 			},
 			{
 				Name:        "kind",
@@ -136,13 +137,13 @@ func tableAzureEventGridTopic(_ context.Context) *plugin.Table {
 				Name:        "public_network_access",
 				Description: "This determines if traffic is allowed over public network. By default it is enabled.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("TopicProperties.PublicNetworkAccess"),
+				Transform:   transform.FromField("Properties.PublicNetworkAccess"),
 			},
 			{
 				Name:        "sku_name",
 				Description: "Name of this SKU. Possible values include: 'Basic', 'Standard'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("SKU.Name").Transform(transform.ToString),
 			},
 			{
 				Name:        "diagnostic_settings",
@@ -165,19 +166,25 @@ func tableAzureEventGridTopic(_ context.Context) *plugin.Table {
 				Name:        "inbound_ip_rules",
 				Description: "This can be used to restrict traffic from specific IPs instead of all IPs. Note: These are considered only if PublicNetworkAccess is enabled.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("TopicProperties.InboundIPRules"),
+				Transform:   transform.FromField("Properties.InboundIPRules"),
 			},
 			{
 				Name:        "input_schema_mapping",
 				Description: "Information about the InputSchemaMapping which specified the info about mapping event payload.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("TopicProperties.InputSchemaMapping"),
+				Transform:   transform.FromField("Properties.InputSchemaMapping"),
 			},
 			{
 				Name:        "private_endpoint_connections",
 				Description: "List of private endpoint connections for the event grid topic.",
 				Type:        proto.ColumnType_JSON,
 				Transform:   transform.From(extractEventgridTopicPrivaterEndPointConnections),
+			},
+			{
+				Name:        "minimum_tls_version_allowed",
+				Description: "This determines the minimum TLS version required for traffic to the topic.",
+				Type:        proto.ColumnType_STRING,
+				Transform:   transform.FromField("Properties.MinimumTLSVersionAllowed").Transform(transformToString),
 			},
 
 			// Steampipe standard columns
@@ -219,41 +226,40 @@ func tableAzureEventGridTopic(_ context.Context) *plugin.Table {
 //// LIST FUNCTION
 
 func listEventGridTopics(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listEventGridTopics")
+	logger := plugin.Logger(ctx)
+	logger.Trace("listEventGridTopics")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-	client := eventgrid.NewTopicsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	result, err := client.ListBySubscription(ctx, "", nil)
-	if err != nil {
-		plugin.Logger(ctx).Error("listEventGridTopics", "ListBySubscription", err)
+		logger.Error("azure_eventgrid_topic.listEventGridTopics", "session_error", err)
 		return nil, err
 	}
 
-	for _, topic := range result.Values() {
-		d.StreamListItem(ctx, topic)
+	f, err := armeventgrid.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
 	}
 
-	for result.NotDone() {
-		// Wait for rate limiting
+	client := f.NewTopicsClient()
+
+	pager := client.NewListBySubscriptionPager(nil)
+	for pager.More() {
+		// Wait for rate limiter
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, topic := range result.Values() {
-			d.StreamListItem(ctx, topic)
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
 		}
 	}
 
@@ -263,7 +269,8 @@ func listEventGridTopics(ctx context.Context, d *plugin.QueryData, _ *plugin.Hyd
 //// HYDRATE FUNCTIONS
 
 func getEventGridTopic(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getEventGridTopic")
+	logger := plugin.Logger(ctx)
+	logger.Trace("getEventGridTopic")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -273,25 +280,25 @@ func getEventGridTopic(ctx context.Context, d *plugin.QueryData, _ *plugin.Hydra
 		return nil, nil
 	}
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-	client := eventgrid.NewTopicsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	op, err := client.Get(ctx, resourceGroup, name)
-	if err != nil {
-		plugin.Logger(ctx).Error("getEventGridTopic", "get", err)
+		logger.Error("azure_eventgrid_topic.listEventGridTopics", "session_error", err)
 		return nil, err
 	}
 
-	return op, nil
+	f, err := armeventgrid.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	client := f.NewTopicsClient()
+	op, err := client.Get(ctx, resourceGroup, name, nil)
+	if err != nil {
+		logger.Error("getEventGridTopic", "get", err)
+		return nil, err
+	}
+
+	return op.Topic, nil
 }
 
 func listEventGridTopicDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
@@ -344,10 +351,10 @@ func listEventGridTopicDiagnosticSettings(ctx context.Context, d *plugin.QueryDa
 // If we return the private endpoint connection directly from api response we will not receive all the properties of private endpoint connections.
 func extractEventgridTopicPrivaterEndPointConnections(ctx context.Context, d *transform.TransformData) (interface{}, error) {
 	plugin.Logger(ctx).Trace("extractEventgridTopicPrivaterEndPointConnections")
-	topic := d.HydrateItem.(eventgrid.Topic)
+	topic := d.HydrateItem.(*armeventgrid.Topic)
 	var privateEndpointConnectionsInfo []map[string]interface{}
-	if topic.PrivateEndpointConnections != nil {
-		privateEndpointConnections := *topic.PrivateEndpointConnections
+	if topic.Properties.PrivateEndpointConnections != nil {
+		privateEndpointConnections := topic.Properties.PrivateEndpointConnections
 		for _, endpoint := range privateEndpointConnections {
 			objectMap := make(map[string]interface{})
 
@@ -363,27 +370,27 @@ func extractEventgridTopicPrivaterEndPointConnections(ctx context.Context, d *tr
 				objectMap["type"] = endpoint.Type
 			}
 
-			if endpoint.PrivateEndpointConnectionProperties != nil {
-				if endpoint.PrivateEndpointConnectionProperties.PrivateEndpoint != nil {
-					if endpoint.PrivateEndpointConnectionProperties.PrivateEndpoint.ID != nil {
-						objectMap["endpointId"] = endpoint.PrivateEndpointConnectionProperties.PrivateEndpoint.ID
+			if endpoint.Properties != nil {
+				if endpoint.Properties.PrivateEndpoint != nil {
+					if endpoint.Properties.PrivateEndpoint.ID != nil {
+						objectMap["endpointId"] = endpoint.Properties.PrivateEndpoint.ID
 					}
 				}
-				if endpoint.PrivateEndpointConnectionProperties.GroupIds != nil {
-					objectMap["groupIds"] = endpoint.PrivateEndpointConnectionProperties.GroupIds
+				if endpoint.Properties.GroupIDs != nil {
+					objectMap["groupIds"] = endpoint.Properties.GroupIDs
 				}
-				if endpoint.PrivateEndpointConnectionProperties.ProvisioningState != "" {
-					objectMap["provisioningState"] = endpoint.PrivateEndpointConnectionProperties.ProvisioningState
+				if endpoint.Properties.ProvisioningState != nil {
+					objectMap["provisioningState"] = *endpoint.Properties.ProvisioningState
 				}
-				if endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState != nil {
-					if endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState.Status != "" {
-						objectMap["privateLinkServiceConnectionStateStatus"] = endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState.Status
+				if endpoint.Properties.PrivateLinkServiceConnectionState != nil {
+					if endpoint.Properties.PrivateLinkServiceConnectionState.Status != nil {
+						objectMap["privateLinkServiceConnectionStateStatus"] = *endpoint.Properties.PrivateLinkServiceConnectionState.Status
 					}
-					if endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState.Description != nil {
-						objectMap["privateLinkServiceConnectionStateDescription"] = endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState.Description
+					if endpoint.Properties.PrivateLinkServiceConnectionState.Description != nil {
+						objectMap["privateLinkServiceConnectionStateDescription"] = *endpoint.Properties.PrivateLinkServiceConnectionState.Description
 					}
-					if endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState.ActionsRequired != nil {
-						objectMap["privateLinkServiceConnectionStateActionsRequired"] = endpoint.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState.ActionsRequired
+					if endpoint.Properties.PrivateLinkServiceConnectionState.ActionsRequired != nil {
+						objectMap["privateLinkServiceConnectionStateActionsRequired"] = *endpoint.Properties.PrivateLinkServiceConnectionState.ActionsRequired
 					}
 				}
 			}
