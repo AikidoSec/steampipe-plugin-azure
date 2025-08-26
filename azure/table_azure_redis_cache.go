@@ -2,7 +2,9 @@ package azure
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis/v3"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
@@ -188,6 +190,13 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Description: "A list of availability zones denoting where the resource needs to come from.",
 				Type:        proto.ColumnType_JSON,
 			},
+			{
+				Name:        "firewall_rules",
+				Description: "A list firewall rules associated with the specified redis cache.",
+				Type:        proto.ColumnType_JSON,
+				Hydrate:     listFirewallRules,
+				Transform:   transform.FromValue(),
+			},
 
 			// Steampipe standard columns
 			{
@@ -302,4 +311,53 @@ func getRedisCache(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateDa
 	}
 
 	return op, nil
+}
+
+func listFirewallRules(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listFirewallRules")
+
+	cacheData := h.Item.(*armredis.ResourceInfo)
+
+	resourceID, err := arm.ParseResourceID(*cacheData.ID)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing resource ID: %w", err)
+	}
+
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_redis_cache.listFirewallRules", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armredis.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	client := f.NewFirewallRulesClient()
+
+	rules := make([]*armredis.FirewallRule, 0)
+	pager := client.NewListPager(resourceID.ResourceGroupName, *cacheData.Name, nil)
+	for pager.More() {
+		// Wait for rate limiter
+		d.WaitForListRateLimit(ctx)
+
+		resp, err := pager.NextPage(ctx)
+		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
+			return nil, err
+		}
+
+		for _, v := range resp.Value {
+			rules = append(rules, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
+		}
+	}
+
+	return rules, nil
 }
