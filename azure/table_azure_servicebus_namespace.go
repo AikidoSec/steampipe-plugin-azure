@@ -385,7 +385,7 @@ func listServiceBusNamespacePrivateEndpointConnections(ctx context.Context, d *p
 		}
 	}
 
-	return nil, nil
+	return serviceBusNamespacePrivateEndpointConnections, nil
 }
 
 func listServiceBusNamespaceAuthorizationRules(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
@@ -430,7 +430,7 @@ func listServiceBusNamespaceAuthorizationRules(ctx context.Context, d *plugin.Qu
 		}
 	}
 
-	return nil, nil
+	return serviceBusNamespaceAuthorizationRules, nil
 }
 
 // If we return the API response directly, the output will not provide the properties of AuthorizationRuleProperties

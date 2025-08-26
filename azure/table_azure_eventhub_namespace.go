@@ -223,7 +223,7 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEventHubNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func listEventHubNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (any, error) {
 	logger := plugin.Logger(ctx)
 	logger.Trace("listEventHubNamespaces")
 
@@ -266,7 +266,7 @@ func listEventHubNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.
 
 //// HYDRATE FUNCTIONS
 
-func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (any, error) {
 	logger := plugin.Logger(ctx)
 	logger.Trace("getEventHubNamespace")
 
@@ -299,7 +299,7 @@ func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 	return op.EHNamespace, nil
 }
 
-func getNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+func getNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
 	logger := plugin.Logger(ctx)
 	logger.Trace("getNetworkRuleSet")
 
@@ -326,7 +326,7 @@ func getNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 	return op, nil
 }
 
-func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
 	plugin.Logger(ctx).Trace("listEventHubNamespaceDiagnosticSettings")
 	id := *h.Item.(*armeventhub.EHNamespace).ID
 
@@ -351,9 +351,9 @@ func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.Quer
 
 	// If we return the API response directly, the output does not provide all
 	// the contents of DiagnosticSettings
-	var diagnosticSettings []map[string]interface{}
+	var diagnosticSettings []map[string]any
 	for _, i := range *op.Value {
-		objectMap := make(map[string]interface{})
+		objectMap := make(map[string]any)
 		if i.ID != nil {
 			objectMap["id"] = i.ID
 		}
@@ -371,7 +371,7 @@ func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.Quer
 	return diagnosticSettings, nil
 }
 
-func listEventHubNamespacePrivateEndpointConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+func listEventHubNamespacePrivateEndpointConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
 	logger := plugin.Logger(ctx)
 	logger.Trace("listEventHubNamespacePrivateEndpointConnections")
 
@@ -414,13 +414,13 @@ func listEventHubNamespacePrivateEndpointConnections(ctx context.Context, d *plu
 		}
 	}
 
-	return nil, nil
+	return eventHubNamespacePrivateEndpointConnections, nil
 }
 
 // If we return the API response directly, the output will not provide the properties of PrivateEndpointConnections
 
-func extractEventHubNamespacePrivateEndpointConnections(i *armeventhub.PrivateEndpointConnection) map[string]interface{} {
-	eventHubNamespacePrivateEndpointConnection := make(map[string]interface{})
+func extractEventHubNamespacePrivateEndpointConnections(i *armeventhub.PrivateEndpointConnection) map[string]any {
+	eventHubNamespacePrivateEndpointConnection := make(map[string]any)
 	if i.ID != nil {
 		eventHubNamespacePrivateEndpointConnection["id"] = *i.ID
 	}
