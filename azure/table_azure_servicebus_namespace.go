@@ -6,6 +6,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/servicebus/mgmt/servicebus"
 	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/monitor/mgmt/insights"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/servicebus/armservicebus"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -57,67 +58,67 @@ func tableAzureServiceBusNamespace(_ context.Context) *plugin.Table {
 				Name:        "provisioning_state",
 				Description: "The provisioning state of the namespace.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("SBNamespaceProperties.ProvisioningState"),
+				Transform:   transform.FromField("Properties.ProvisioningState"),
 			},
 			{
 				Name:        "zone_redundant",
 				Description: "Enabling this property creates a Premium Service Bus Namespace in regions supported availability zones.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("SBNamespaceProperties.ZoneRedundant"),
+				Transform:   transform.FromField("Properties.ZoneRedundant"),
 			},
 			{
 				Name:        "created_at",
 				Description: "The time the namespace was created.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("SBNamespaceProperties.CreatedAt").Transform(convertDateToTime),
+				Transform:   transform.FromField("Properties.CreatedAt"),
 			},
 			{
 				Name:        "disable_local_auth",
 				Description: "This property disables SAS authentication for the Service Bus namespace.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("SBNamespaceProperties.DisableLocalAuth"),
+				Transform:   transform.FromField("Properties.DisableLocalAuth"),
 			},
 			{
 				Name:        "metric_id",
 				Description: "The identifier for Azure insights metrics.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("SBNamespaceProperties.MetricID"),
+				Transform:   transform.FromField("Properties.MetricID"),
 			},
 			{
 				Name:        "servicebus_endpoint",
 				Description: "Specifies the endpoint used to perform Service Bus operations.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("SBNamespaceProperties.ServiceBusEndpoint"),
+				Transform:   transform.FromField("Properties.ServiceBusEndpoint"),
 			},
 			{
 				Name:        "sku_capacity",
 				Description: "The specified messaging units for the tier. For Premium tier, capacity are 1,2 and 4.",
 				Type:        proto.ColumnType_INT,
-				Transform:   transform.FromField("Sku.Capacity"),
+				Transform:   transform.FromField("SKU.Capacity"),
 			},
 			{
 				Name:        "sku_name",
 				Description: "Name of this SKU. Valid valuer are: 'Basic', 'Standard', 'Premium'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("SKU.Name").Transform(transformToString),
 			},
 			{
 				Name:        "sku_tier",
 				Description: "The billing tier of this particular SKU. Valid values are: 'Basic', 'Standard', 'Premium'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Tier"),
+				Transform:   transform.FromField("SKU.Tier"),
 			},
 			{
 				Name:        "status",
 				Description: "Status of the namespace.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("SBNamespaceProperties.Status"),
+				Transform:   transform.FromField("Properties.Status"),
 			},
 			{
 				Name:        "updated_at",
 				Description: "The time the namespace was updated.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("SBNamespaceProperties.UpdatedAt").Transform(convertDateToTime),
+				Transform:   transform.FromField("Properties.UpdatedAt"),
 			},
 			{
 				Name:        "diagnostic_settings",
@@ -130,7 +131,7 @@ func tableAzureServiceBusNamespace(_ context.Context) *plugin.Table {
 				Name:        "encryption",
 				Description: "Specifies the properties of BYOK encryption configuration. Customer-managed key encryption at rest (Bring Your Own Key) is only available on Premium namespaces.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("SBNamespaceProperties.Encryption"),
+				Transform:   transform.FromField("Properties.Encryption"),
 			},
 			{
 				Name:        "network_rule_set",
@@ -192,49 +193,38 @@ func tableAzureServiceBusNamespace(_ context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listServiceBusNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listServiceBusNamespaces")
+func listServiceBusNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listServiceBusNamespaces")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_servicebus_namespace.listServiceBusNamespaces", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armservicebus.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
 
-	subscriptionID := session.SubscriptionID
-	client := servicebus.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
+	client := f.NewNamespacesClient()
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	result, err := client.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, namespace := range result.Values() {
-		d.StreamListItem(ctx, namespace)
-		// Check if context has been cancelled or if the limit has been hit (if specified)
-		// if there is a limit, it will return the number of rows required to reach this limit
-		if d.RowsRemaining(ctx) == 0 {
-			return nil, nil
-		}
-	}
-
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListPager(nil)
+	for pager.More() {
+		// Wait for rate limiter
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, namespace := range result.Values() {
-			d.StreamListItem(ctx, namespace)
-			// Check if context has been cancelled or if the limit has been hit (if specified)
-			// if there is a limit, it will return the number of rows required to reach this limit
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
 			}
@@ -246,8 +236,9 @@ func listServiceBusNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugi
 
 //// HYDRATE FUNCTIONS
 
-func getServiceBusNamespace(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getServiceBusNamespace")
+func getServiceBusNamespace(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getServiceBusNamespace")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -257,43 +248,47 @@ func getServiceBusNamespace(ctx context.Context, d *plugin.QueryData, h *plugin.
 		return nil, nil
 	}
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_servicebus_namespace.getServiceBusNamespace", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armservicebus.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
 
-	subscriptionID := session.SubscriptionID
-	client := servicebus.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	op, err := client.Get(ctx, resourceGroup, name)
+	client := f.NewNamespacesClient()
+	op, err := client.Get(ctx, resourceGroup, name, nil)
 	if err != nil {
+		logger.Error("getEventGridDomain", "get", err)
 		return nil, err
 	}
 
-	return op, nil
+	return op.SBNamespace, nil
 }
 
-func getServiceBusNamespaceNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getServiceBusNamespaceNetworkRuleSet")
+func getServiceBusNamespaceNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getServiceBusNamespaceNetworkRuleSet")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
-	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-	client := servicebus.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	data := h.Item.(servicebus.SBNamespace)
+	data := h.Item.(*armservicebus.SBNamespace)
 	resourceGroup := strings.Split(*data.ID, "/")[4]
 
-	op, err := client.GetNetworkRuleSet(ctx, resourceGroup, *data.Name)
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_servicebus_namespace.getServiceBusNamespaceNetworkRuleSet", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armservicebus.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
+	}
+	client := f.NewNamespacesClient()
+
+	op, err := client.GetNetworkRuleSet(ctx, resourceGroup, *data.Name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +296,7 @@ func getServiceBusNamespaceNetworkRuleSet(ctx context.Context, d *plugin.QueryDa
 	return op, nil
 }
 
-func listServiceBusNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+func listServiceBusNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
 	plugin.Logger(ctx).Trace("listServiceBusNamespaceDiagnosticSettings")
 	id := *h.Item.(servicebus.SBNamespace).ID
 
@@ -322,9 +317,9 @@ func listServiceBusNamespaceDiagnosticSettings(ctx context.Context, d *plugin.Qu
 
 	// If we return the API response directly, the output only gives
 	// the contents of DiagnosticSettings
-	var diagnosticSettings []map[string]interface{}
+	var diagnosticSettings []map[string]any
 	for _, i := range *op.Value {
-		objectMap := make(map[string]interface{})
+		objectMap := make(map[string]any)
 		if i.ID != nil {
 			objectMap["id"] = i.ID
 		}
@@ -342,92 +337,100 @@ func listServiceBusNamespaceDiagnosticSettings(ctx context.Context, d *plugin.Qu
 	return diagnosticSettings, nil
 }
 
-func listServiceBusNamespacePrivateEndpointConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listServiceBusNamespacePrivateEndpointConnections")
+func listServiceBusNamespacePrivateEndpointConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listServiceBusNamespacePrivateEndpointConnections")
 
-	namespace := h.Item.(servicebus.SBNamespace)
-	resourceGroup := strings.Split(string(*namespace.ID), "/")[4]
+	namespace := h.Item.(*armservicebus.SBNamespace)
+	resourceGroup := strings.Split(*namespace.ID, "/")[4]
 	namespaceName := *namespace.Name
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-
-	client := servicebus.NewPrivateEndpointConnectionsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	op, err := client.List(ctx, resourceGroup, namespaceName)
-	if err != nil {
-		plugin.Logger(ctx).Error("listServiceBusNamespacePrivateEndpointConnections", "list", err)
+		logger.Error("azure_servicebus_namespace.listServiceBusNamespacePrivateEndpointConnections", "session_error", err)
 		return nil, err
 	}
 
-	var serviceBusNamespacePrivateEndpointConnections []map[string]interface{}
-
-	for _, i := range op.Values() {
-		serviceBusNamespacePrivateEndpointConnections = append(serviceBusNamespacePrivateEndpointConnections, extractServiceBusNamespacePrivateEndpointConnection(i))
+	f, err := armservicebus.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
 	}
+	client := f.NewPrivateEndpointConnectionsClient()
 
-	for op.NotDone() {
-		err = op.NextWithContext(ctx)
+	pager := client.NewListPager(resourceGroup, namespaceName, nil)
+
+	var serviceBusNamespacePrivateEndpointConnections []map[string]any
+	for pager.More() {
+		// Wait for rate limiter
+		d.WaitForListRateLimit(ctx)
+
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
-			plugin.Logger(ctx).Error("listServiceBusNamespacePrivateEndpointConnections", "list_paging", err)
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
-		for _, i := range op.Values() {
-			serviceBusNamespacePrivateEndpointConnections = append(serviceBusNamespacePrivateEndpointConnections, extractServiceBusNamespacePrivateEndpointConnection(i))
+
+		for _, v := range resp.Value {
+			serviceBusNamespacePrivateEndpointConnections = append(serviceBusNamespacePrivateEndpointConnections, extractServiceBusNamespacePrivateEndpointConnection(v))
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
 		}
 	}
 
-	return serviceBusNamespacePrivateEndpointConnections, nil
+	return nil, nil
 }
 
-func listServiceBusNamespaceAuthorizationRules(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+func listServiceBusNamespaceAuthorizationRules(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listServiceBusNamespaceAuthorizationRules")
 
-	namespace := h.Item.(servicebus.SBNamespace)
-	resourceGroup := strings.Split(string(*namespace.ID), "/")[4]
+	namespace := h.Item.(*armservicebus.SBNamespace)
+	resourceGroup := strings.Split(*namespace.ID, "/")[4]
 	namespaceName := *namespace.Name
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-
-	client := servicebus.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	op, err := client.ListAuthorizationRules(ctx, resourceGroup, namespaceName)
-	if err != nil {
-		plugin.Logger(ctx).Error("azure_servicebus_namespace.listServiceBusNamespaceAuthorizationRules", "api_error", err)
+		logger.Error("azure_servicebus_namespace.listServiceBusNamespaceAuthorizationRules", "session_error", err)
 		return nil, err
 	}
 
-	var serviceBusNamespaceAuthorizationRules []map[string]interface{}
-
-	for _, r := range op.Values() {
-		serviceBusNamespaceAuthorizationRules = append(serviceBusNamespaceAuthorizationRules, extractServiceBusNamespacAuthRule(r))
+	f, err := armservicebus.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
 	}
+	client := f.NewNamespacesClient()
 
-	for op.NotDone() {
-		err = op.NextWithContext(ctx)
+	pager := client.NewListAuthorizationRulesPager(resourceGroup, namespaceName, nil)
+	var serviceBusNamespaceAuthorizationRules []map[string]any
+	for pager.More() {
+		// Wait for rate limiter
+		d.WaitForListRateLimit(ctx)
+
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
-			plugin.Logger(ctx).Error("azure_servicebus_namespace.listServiceBusNamespaceAuthorizationRules", "paging_error", err)
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
-		for _, r := range op.Values() {
-			serviceBusNamespaceAuthorizationRules = append(serviceBusNamespaceAuthorizationRules, extractServiceBusNamespacAuthRule(r))
+
+		for _, v := range resp.Value {
+			serviceBusNamespaceAuthorizationRules = append(serviceBusNamespaceAuthorizationRules, extractServiceBusNamespacAuthRule(v))
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
 		}
 	}
 
-	return serviceBusNamespaceAuthorizationRules, nil
+	return nil, nil
 }
 
 // If we return the API response directly, the output will not provide the properties of AuthorizationRuleProperties
-func extractServiceBusNamespacAuthRule(i servicebus.SBAuthorizationRule) map[string]interface{} {
-	serviceBusNamespaceAuthRule := make(map[string]interface{})
+func extractServiceBusNamespacAuthRule(i *armservicebus.SBAuthorizationRule) map[string]any {
+	serviceBusNamespaceAuthRule := make(map[string]any)
 	if i.ID != nil {
 		serviceBusNamespaceAuthRule["id"] = *i.ID
 	}
@@ -440,10 +443,10 @@ func extractServiceBusNamespacAuthRule(i servicebus.SBAuthorizationRule) map[str
 	if i.SystemData != nil {
 		serviceBusNamespaceAuthRule["systemData"] = *i.SystemData
 	}
-	if i.SBAuthorizationRuleProperties != nil {
-		if len(*i.SBAuthorizationRuleProperties.Rights) > 0 {
-			serviceBusNamespaceAuthRule["properties"] = map[string]interface{}{
-				"rights": *i.SBAuthorizationRuleProperties.Rights,
+	if i.Properties != nil {
+		if i.Properties.Rights != nil {
+			serviceBusNamespaceAuthRule["properties"] = map[string]any{
+				"rights": i.Properties.Rights,
 			}
 		}
 	}
@@ -451,8 +454,8 @@ func extractServiceBusNamespacAuthRule(i servicebus.SBAuthorizationRule) map[str
 }
 
 // If we return the API response directly, the output will not provide the properties of PrivateEndpointConnections
-func extractServiceBusNamespacePrivateEndpointConnection(i servicebus.PrivateEndpointConnection) map[string]interface{} {
-	serviceBusNamespacePrivateEndpointConnection := make(map[string]interface{})
+func extractServiceBusNamespacePrivateEndpointConnection(i *armservicebus.PrivateEndpointConnection) map[string]any {
+	serviceBusNamespacePrivateEndpointConnection := make(map[string]any)
 	if i.ID != nil {
 		serviceBusNamespacePrivateEndpointConnection["id"] = *i.ID
 	}
@@ -462,15 +465,15 @@ func extractServiceBusNamespacePrivateEndpointConnection(i servicebus.PrivateEnd
 	if i.Type != nil {
 		serviceBusNamespacePrivateEndpointConnection["type"] = *i.Type
 	}
-	if i.PrivateEndpointConnectionProperties != nil {
-		if len(i.PrivateEndpointConnectionProperties.ProvisioningState) > 0 {
-			serviceBusNamespacePrivateEndpointConnection["provisioningState"] = i.PrivateEndpointConnectionProperties.ProvisioningState
+	if i.Properties != nil {
+		if i.Properties.ProvisioningState != nil {
+			serviceBusNamespacePrivateEndpointConnection["provisioningState"] = *i.Properties.ProvisioningState
 		}
-		if i.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState != nil {
-			serviceBusNamespacePrivateEndpointConnection["privateLinkServiceConnectionState"] = i.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState
+		if i.Properties.PrivateLinkServiceConnectionState != nil {
+			serviceBusNamespacePrivateEndpointConnection["privateLinkServiceConnectionState"] = *i.Properties.PrivateLinkServiceConnectionState
 		}
-		if i.PrivateEndpointConnectionProperties.PrivateEndpoint != nil && i.PrivateEndpointConnectionProperties.PrivateEndpoint.ID != nil {
-			serviceBusNamespacePrivateEndpointConnection["privateEndpointPropertyID"] = i.PrivateEndpointConnectionProperties.PrivateEndpoint.ID
+		if i.Properties.PrivateEndpoint != nil && i.Properties.PrivateEndpoint.ID != nil {
+			serviceBusNamespacePrivateEndpointConnection["privateEndpointPropertyID"] = *i.Properties.PrivateEndpoint.ID
 		}
 	}
 	return serviceBusNamespacePrivateEndpointConnection
