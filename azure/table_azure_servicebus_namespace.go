@@ -6,7 +6,7 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/servicebus/mgmt/servicebus"
 	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/monitor/mgmt/insights"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/servicebus/armservicebus"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/servicebus/armservicebus/v2"
 
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
@@ -153,6 +153,12 @@ func tableAzureServiceBusNamespace(_ context.Context) *plugin.Table {
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     listServiceBusNamespaceAuthorizationRules,
 				Transform:   transform.FromValue(),
+			},
+			{
+				Name:        "minimum_tls_version_allowed",
+				Description: "This determines the minimum TLS version required for traffic to the domain.",
+				Type:        proto.ColumnType_STRING,
+				Transform:   transform.FromField("Properties.MinimumTLSVersion").Transform(transformToString),
 			},
 
 			// Steampipe standard columns
