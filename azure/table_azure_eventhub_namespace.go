@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/eventhub/mgmt/eventhub"
 	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/monitor/mgmt/insights"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventhub/armeventhub"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -65,79 +65,79 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 				Name:        "provisioning_state",
 				Description: "Provisioning state of the namespace.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("EHNamespaceProperties.ProvisioningState"),
+				Transform:   transform.FromField("Properties.ProvisioningState"),
 			},
 			{
 				Name:        "created_at",
 				Description: "The time the namespace was created.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("EHNamespaceProperties.CreatedAt").Transform(convertDateToTime),
+				Transform:   transform.FromField("Properties.CreatedAt"),
 			},
 			{
 				Name:        "cluster_arm_id",
 				Description: "Cluster ARM ID of the namespace.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("EHNamespaceProperties.ClusterArmID"),
+				Transform:   transform.FromField("Properties.ClusterArmID"),
 			},
 			{
 				Name:        "is_auto_inflate_enabled",
 				Description: "Indicates whether auto-inflate is enabled for eventhub namespace.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("EHNamespaceProperties.IsAutoInflateEnabled"),
+				Transform:   transform.FromField("Properties.IsAutoInflateEnabled"),
 			},
 			{
 				Name:        "kafka_enabled",
 				Description: "Indicates whether kafka is enabled for eventhub namespace, or not.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("EHNamespaceProperties.KafkaEnabled"),
+				Transform:   transform.FromField("Properties.KafkaEnabled"),
 			},
 			{
 				Name:        "maximum_throughput_units",
 				Description: "Upper limit of throughput units when auto-inflate is enabled, value should be within 0 to 20 throughput units.",
 				Type:        proto.ColumnType_INT,
-				Transform:   transform.FromField("EHNamespaceProperties.MaximumThroughputUnits"),
+				Transform:   transform.FromField("Properties.MaximumThroughputUnits"),
 			},
 			{
 				Name:        "metric_id",
 				Description: "Identifier for azure insights metrics.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("EHNamespaceProperties.Metric_id"),
+				Transform:   transform.FromField("Properties.Metric_id"),
 			},
 			{
 				Name:        "service_bus_endpoint",
 				Description: "Endpoint you can use to perform service bus operations.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("EHNamespaceProperties.ServiceBusEndpoint"),
+				Transform:   transform.FromField("Properties.ServiceBusEndpoint"),
 			},
 			{
 				Name:        "sku_capacity",
 				Description: "The Event Hubs throughput units, value should be 0 to 20 throughput units.",
 				Type:        proto.ColumnType_INT,
-				Transform:   transform.FromField("Sku.Capacity"),
+				Transform:   transform.FromField("SKU.Capacity"),
 			},
 			{
 				Name:        "sku_name",
 				Description: "Name of this SKU. Possible values include: 'Basic', 'Standard'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Name").Transform(transform.ToString),
+				Transform:   transform.FromField("SKU.Name").Transform(transform.ToString),
 			},
 			{
 				Name:        "sku_tier",
 				Description: "The billing tier of this particular SKU. Valid values are: 'Basic', 'Standard', 'Premium'.",
 				Type:        proto.ColumnType_STRING,
-				Transform:   transform.FromField("Sku.Tier"),
+				Transform:   transform.FromField("SKU.Tier"),
 			},
 			{
 				Name:        "updated_at",
 				Description: "The time the namespace was updated.",
 				Type:        proto.ColumnType_TIMESTAMP,
-				Transform:   transform.FromField("EHNamespaceProperties.UpdatedAt").Transform(convertDateToTime),
+				Transform:   transform.FromField("Properties.UpdatedAt"),
 			},
 			{
 				Name:        "zone_redundant",
 				Description: "Enabling this property creates a standard event hubs namespace in regions supported availability zones.",
 				Type:        proto.ColumnType_BOOL,
-				Transform:   transform.FromField("EHNamespaceProperties.ZoneRedundant"),
+				Transform:   transform.FromField("Properties.ZoneRedundant"),
 			},
 			{
 				Name:        "network_rule_set",
@@ -156,13 +156,13 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 				Name:        "encryption",
 				Description: "Properties of BYOK encryption description.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("EHNamespaceProperties.Encryption"),
+				Transform:   transform.FromField("Properties.Encryption"),
 			},
 			{
 				Name:        "identity",
 				Description: "Describes the properties of BYOK encryption description.",
 				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("EHNamespaceProperties.Encryption"),
+				Transform:   transform.FromField("Properties.Encryption"),
 			},
 			{
 				Name:        "network_rule_set",
@@ -177,6 +177,12 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     listEventHubNamespacePrivateEndpointConnections,
 				Transform:   transform.FromValue(),
+			},
+			{
+				Name:        "minimum_tls_version_allowed",
+				Description: "This determines the minimum TLS version required for traffic to the domain.",
+				Type:        proto.ColumnType_STRING,
+				Transform:   transform.FromField("Properties.MinimumTLSVersion").Transform(transformToString),
 			},
 
 			// Steampipe standard columns
@@ -217,43 +223,41 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 
 //// LIST FUNCTION
 
-func listEventHubNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listEventHubNamespaces")
+func listEventHubNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listEventHubNamespaces")
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_eventhub_namespace.listEventHubNamespaces", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armeventhub.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
 
-	subscriptionID := session.SubscriptionID
-	client := eventhub.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
+	client := f.NewNamespacesClient()
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	result, err := client.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, namespace := range result.Values() {
-		d.StreamListItem(ctx, namespace)
-
-	}
-
-	for result.NotDone() {
-		// Wait for rate limiting
+	pager := client.NewListPager(nil)
+	for pager.More() {
+		// Wait for rate limiter
 		d.WaitForListRateLimit(ctx)
 
-		err = result.NextWithContext(ctx)
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
 
-		for _, namespace := range result.Values() {
-			d.StreamListItem(ctx, namespace)
+		for _, v := range resp.Value {
+			d.StreamListItem(ctx, v)
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
 		}
 	}
 
@@ -262,8 +266,9 @@ func listEventHubNamespaces(ctx context.Context, d *plugin.QueryData, _ *plugin.
 
 //// HYDRATE FUNCTIONS
 
-func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getEventHubNamespace")
+func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getEventHubNamespace")
 
 	name := d.EqualsQuals["name"].GetStringValue()
 	resourceGroup := d.EqualsQuals["resource_group"].GetStringValue()
@@ -273,19 +278,47 @@ func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 		return nil, nil
 	}
 
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_eventhub_namespace.getEventHubNamespace", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armeventhub.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		return nil, err
 	}
-	subscriptionID := session.SubscriptionID
-	client := eventhub.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
 
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
+	client := f.NewNamespacesClient()
+	op, err := client.Get(ctx, resourceGroup, name, nil)
+	if err != nil {
+		logger.Error("getEventGridDomain", "get", err)
+		return nil, err
+	}
 
-	op, err := client.Get(ctx, resourceGroup, name)
+	return op.EHNamespace, nil
+}
+
+func getNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("getNetworkRuleSet")
+
+	namespace := h.Item.(*armeventhub.EHNamespace)
+	resourceGroupName := strings.Split(*namespace.ID, "/")[4]
+
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		logger.Error("azure_eventhub_namespace.getEventHubNamespace", "session_error", err)
+		return nil, err
+	}
+
+	f, err := armeventhub.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
+	}
+	client := f.NewNamespacesClient()
+
+	op, err := client.GetNetworkRuleSet(ctx, resourceGroupName, *namespace.Name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -293,35 +326,9 @@ func getEventHubNamespace(ctx context.Context, d *plugin.QueryData, _ *plugin.Hy
 	return op, nil
 }
 
-func getNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("getNetworkRuleSet")
-
-	// Create session
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
-	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-	networkClient := eventhub.NewNamespacesClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	networkClient.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &networkClient, d.Connection)
-
-	namespace := h.Item.(eventhub.EHNamespace)
-	resourceGroupName := strings.Split(string(*namespace.ID), "/")[4]
-
-	op, err := networkClient.GetNetworkRuleSet(ctx, resourceGroupName, *namespace.Name)
-	if err != nil {
-		return nil, err
-	}
-
-	return op, nil
-}
-
-func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
 	plugin.Logger(ctx).Trace("listEventHubNamespaceDiagnosticSettings")
-	id := *h.Item.(eventhub.EHNamespace).ID
+	id := *h.Item.(*armeventhub.EHNamespace).ID
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "MANAGEMENT")
@@ -344,9 +351,9 @@ func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.Quer
 
 	// If we return the API response directly, the output does not provide all
 	// the contents of DiagnosticSettings
-	var diagnosticSettings []map[string]interface{}
+	var diagnosticSettings []map[string]any
 	for _, i := range *op.Value {
-		objectMap := make(map[string]interface{})
+		objectMap := make(map[string]any)
 		if i.ID != nil {
 			objectMap["id"] = i.ID
 		}
@@ -364,45 +371,46 @@ func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.Quer
 	return diagnosticSettings, nil
 }
 
-func listEventHubNamespacePrivateEndpointConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	plugin.Logger(ctx).Trace("listEventHubNamespacePrivateEndpointConnections")
+func listEventHubNamespacePrivateEndpointConnections(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
+	logger := plugin.Logger(ctx)
+	logger.Trace("listEventHubNamespacePrivateEndpointConnections")
 
-	namespace := h.Item.(eventhub.EHNamespace)
-	resourceGroup := strings.Split(string(*namespace.ID), "/")[4]
+	namespace := h.Item.(*armeventhub.EHNamespace)
+	resourceGroup := strings.Split(*namespace.ID, "/")[4]
 	namespaceName := *namespace.Name
 
-	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	session, err := GetNewSessionUpdated(ctx, d)
 	if err != nil {
-		return nil, err
-	}
-	subscriptionID := session.SubscriptionID
-
-	client := eventhub.NewPrivateEndpointConnectionsClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
-	client.Authorizer = session.Authorizer
-
-	// Apply Retry rule
-	ApplyRetryRules(ctx, &client, d.Connection)
-
-	op, err := client.List(ctx, resourceGroup, namespaceName)
-	if err != nil {
-		plugin.Logger(ctx).Error("listEventHubNamespacePrivateEndpointConnections", "list", err)
+		logger.Error("azure_eventhub_namespace.listEventHubNamespacePrivateEndpointConnections", "session_error", err)
 		return nil, err
 	}
 
-	var eventHubNamespacePrivateEndpointConnections []map[string]interface{}
-
-	for _, i := range op.Values() {
-		eventHubNamespacePrivateEndpointConnections = append(eventHubNamespacePrivateEndpointConnections, extractEventHubNamespacePrivateEndpointConnections(i))
+	f, err := armeventhub.NewClientFactory(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		return nil, err
 	}
+	client := f.NewPrivateEndpointConnectionsClient()
 
-	for op.NotDone() {
-		err = op.NextWithContext(ctx)
+	pager := client.NewListPager(resourceGroup, namespaceName, nil)
+
+	var eventHubNamespacePrivateEndpointConnections []map[string]any
+	for pager.More() {
+		// Wait for rate limiter
+		d.WaitForListRateLimit(ctx)
+
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
-			plugin.Logger(ctx).Error("listEventHubNamespacePrivateEndpointConnections", "list_paging", err)
+			logger.Error("error listing next page", "api_error", err)
 			return nil, err
 		}
-		for _, i := range op.Values() {
-			eventHubNamespacePrivateEndpointConnections = append(eventHubNamespacePrivateEndpointConnections, extractEventHubNamespacePrivateEndpointConnections(i))
+
+		for _, v := range resp.Value {
+			eventHubNamespacePrivateEndpointConnections = append(eventHubNamespacePrivateEndpointConnections, extractEventHubNamespacePrivateEndpointConnections(v))
+
+			// Check if the context has been canceled or if the limit has been hit (if specified)
+			if d.RowsRemaining(ctx) == 0 {
+				return nil, nil
+			}
 		}
 	}
 
@@ -411,8 +419,8 @@ func listEventHubNamespacePrivateEndpointConnections(ctx context.Context, d *plu
 
 // If we return the API response directly, the output will not provide the properties of PrivateEndpointConnections
 
-func extractEventHubNamespacePrivateEndpointConnections(i eventhub.PrivateEndpointConnection) map[string]interface{} {
-	eventHubNamespacePrivateEndpointConnection := make(map[string]interface{})
+func extractEventHubNamespacePrivateEndpointConnections(i *armeventhub.PrivateEndpointConnection) map[string]any {
+	eventHubNamespacePrivateEndpointConnection := make(map[string]any)
 	if i.ID != nil {
 		eventHubNamespacePrivateEndpointConnection["id"] = *i.ID
 	}
@@ -422,15 +430,15 @@ func extractEventHubNamespacePrivateEndpointConnections(i eventhub.PrivateEndpoi
 	if i.Type != nil {
 		eventHubNamespacePrivateEndpointConnection["type"] = *i.Type
 	}
-	if i.PrivateEndpointConnectionProperties != nil {
-		if len(i.PrivateEndpointConnectionProperties.ProvisioningState) > 0 {
-			eventHubNamespacePrivateEndpointConnection["provisioningState"] = i.PrivateEndpointConnectionProperties.ProvisioningState
+	if i.Properties != nil {
+		if i.Properties.ProvisioningState != nil {
+			eventHubNamespacePrivateEndpointConnection["provisioningState"] = *i.Properties.ProvisioningState
 		}
-		if i.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState != nil {
-			eventHubNamespacePrivateEndpointConnection["privateLinkServiceConnectionState"] = i.PrivateEndpointConnectionProperties.PrivateLinkServiceConnectionState
+		if i.Properties.PrivateLinkServiceConnectionState != nil {
+			eventHubNamespacePrivateEndpointConnection["privateLinkServiceConnectionState"] = *i.Properties.PrivateLinkServiceConnectionState
 		}
-		if i.PrivateEndpointConnectionProperties.PrivateEndpoint != nil && i.PrivateEndpointConnectionProperties.PrivateEndpoint.ID != nil {
-			eventHubNamespacePrivateEndpointConnection["privateEndpointPropertyID"] = i.PrivateEndpointConnectionProperties.PrivateEndpoint.ID
+		if i.Properties.PrivateEndpoint != nil && i.Properties.PrivateEndpoint.ID != nil {
+			eventHubNamespacePrivateEndpointConnection["privateEndpointPropertyID"] = *i.Properties.PrivateEndpoint.ID
 		}
 	}
 	return eventHubNamespacePrivateEndpointConnection
