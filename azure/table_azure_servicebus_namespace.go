@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/Azure/azure-sdk-for-go/profiles/latest/servicebus/mgmt/servicebus"
 	"github.com/Azure/azure-sdk-for-go/profiles/preview/preview/monitor/mgmt/insights"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/servicebus/armservicebus/v2"
 
@@ -304,7 +303,7 @@ func getServiceBusNamespaceNetworkRuleSet(ctx context.Context, d *plugin.QueryDa
 
 func listServiceBusNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
 	plugin.Logger(ctx).Trace("listServiceBusNamespaceDiagnosticSettings")
-	id := *h.Item.(servicebus.SBNamespace).ID
+	id := *h.Item.(*armservicebus.SBNamespace).ID
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "MANAGEMENT")
