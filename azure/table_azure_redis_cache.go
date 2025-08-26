@@ -64,6 +64,12 @@ func tableAzureRedisCache(_ context.Context) *plugin.Table {
 				Transform:   transform.FromField("Properties.RedisVersion"),
 			},
 			{
+				Name:        "disable_access_key_authentication",
+				Description: "Specifies whether auth through access keys is disabled.",
+				Type:        proto.ColumnType_BOOL,
+				Transform:   transform.FromField("Properties.DisableAccessKeyAuthentication"),
+			},
+			{
 				Name:        "enable_non_ssl_port",
 				Description: "Specifies whether the non-ssl Redis server port (6379) is enabled.",
 				Type:        proto.ColumnType_BOOL,
