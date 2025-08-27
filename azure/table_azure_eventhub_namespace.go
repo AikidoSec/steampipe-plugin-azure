@@ -74,6 +74,12 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 				Transform:   transform.FromField("Properties.CreatedAt"),
 			},
 			{
+				Name:        "disable_local_auth",
+				Description: "This property disables SAS authentication for the Event Hubs namespace.",
+				Type:        proto.ColumnType_BOOL,
+				Transform:   transform.FromField("Properties.DisableLocalAuth"),
+			},
+			{
 				Name:        "cluster_arm_id",
 				Description: "Cluster ARM ID of the namespace.",
 				Type:        proto.ColumnType_STRING,
@@ -140,12 +146,6 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 				Transform:   transform.FromField("Properties.ZoneRedundant"),
 			},
 			{
-				Name:        "network_rule_set",
-				Description: "The network rule set for the event hub namespace.",
-				Type:        proto.ColumnType_JSON,
-				Transform:   transform.FromField("Properties.NetworkRuleSet"),
-			},
-			{
 				Name:        "diagnostic_settings",
 				Description: "A list of active diagnostic settings for the eventhub namespace.",
 				Type:        proto.ColumnType_JSON,
@@ -166,7 +166,7 @@ func tableAzureEventHubNamespace(_ context.Context) *plugin.Table {
 			},
 			{
 				Name:        "network_rule_set",
-				Description: "Describes the network rule set for specified namespace. The EventHub Namespace must be Premium in order to attach a EventHub Namespace Network Rule Set.",
+				Description: "Describes the network rule set for specified namespace.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getNetworkRuleSet,
 				Transform:   transform.FromValue(),
@@ -323,7 +323,7 @@ func getNetworkRuleSet(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 		return nil, err
 	}
 
-	return op, nil
+	return op.Properties, nil
 }
 
 func listEventHubNamespaceDiagnosticSettings(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (any, error) {
