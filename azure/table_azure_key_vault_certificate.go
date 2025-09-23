@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	keyVaultp1 "github.com/Azure/azure-sdk-for-go/profiles/latest/keyvault/mgmt/keyvault"
 	"github.com/Azure/azure-sdk-for-go/services/keyvault/2016-10-01/keyvault"
 	"github.com/turbot/steampipe-plugin-sdk/v5/grpc/proto"
 	"github.com/turbot/steampipe-plugin-sdk/v5/plugin/transform"
@@ -30,15 +29,14 @@ func tableAzureKeyVaultCertificate(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			Hydrate:       listKeyVaultCertificates,
-			ParentHydrate: listKeyVaults,
+			Hydrate: listKeyVaultCertificates,
 			Tags: map[string]string{
 				"service": "Microsoft.KeyVault",
 				"action":  "vaults/certificates/read",
 			},
 			KeyColumns: plugin.KeyColumnSlice{
 				{
-					Name: "vault_name", Require: plugin.Optional,
+					Name: "vault_name", Require: plugin.Required,
 				},
 			},
 			IgnoreConfig: &plugin.IgnoreConfig{
@@ -202,14 +200,7 @@ func tableAzureKeyVaultCertificate(_ context.Context) *plugin.Table {
 //// LIST FUNCTION
 
 func listKeyVaultCertificates(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	// Get the details of vault
-	vault := h.Item.(keyVaultp1.Resource)
-
-	vaultName := d.EqualsQualString("vault_name")
-
-	if vaultName != "" && vaultName != *vault.Name {
-		return nil, nil
-	}
+	vaultName := d.EqualsQuals["vault_name"].GetStringValue()
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "VAULT")
@@ -217,7 +208,7 @@ func listKeyVaultCertificates(ctx context.Context, d *plugin.QueryData, h *plugi
 		plugin.Logger(ctx).Error("azure_key_vault_certificate.listKeyVaultCertificates", "session_error", err)
 		return nil, err
 	}
-	vaultURI := "https://" + *vault.Name + ".vault.azure.net/"
+	vaultURI := "https://" + vaultName + ".vault.azure.net/"
 
 	client := keyvault.New()
 	client.Authorizer = session.Authorizer
