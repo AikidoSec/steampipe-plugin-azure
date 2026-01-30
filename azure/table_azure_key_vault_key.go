@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/keyvault/mgmt/keyvault"
@@ -29,11 +30,18 @@ func tableAzureKeyVaultKey(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			Hydrate:       listKeyVaultKeys,
-			ParentHydrate: listKeyVaults,
+			Hydrate: listKeyVaultKeys,
 			Tags: map[string]string{
 				"service": "Microsoft.KeyVault",
 				"action":  "vaults/keys/read",
+			},
+			KeyColumns: plugin.KeyColumnSlice{
+				{
+					Name: "vault_name", Require: plugin.Required,
+				},
+				{
+					Name: "id", Require: plugin.Required,
+				},
 			},
 		},
 		Columns: azureColumns([]*plugin.Column{
@@ -182,7 +190,11 @@ func tableAzureKeyVaultKey(_ context.Context) *plugin.Table {
 
 func listKeyVaultKeys(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Get the details of key vault
-	vault := h.Item.(keyvault.Resource)
+	vaultID, vaultName, err := parseKeyVaultIDAndNameFrom(d, h)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_key_vault_key.listKeyVaultKeys", "api_error", err)
+		return nil, fmt.Errorf("error parsing KeyVault ID: %v", err)
+	}
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "MANAGEMENT")
@@ -190,7 +202,7 @@ func listKeyVaultKeys(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 		return nil, err
 	}
 	subscriptionID := session.SubscriptionID
-	resourceGroup := strings.Split(*vault.ID, "/")[4]
+	resourceGroup := strings.Split(vaultID, "/")[4]
 
 	client := keyvault.NewKeysClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
 	client.Authorizer = session.Authorizer
@@ -198,7 +210,7 @@ func listKeyVaultKeys(ctx context.Context, d *plugin.QueryData, h *plugin.Hydrat
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &client, d.Connection)
 
-	result, err := client.List(ctx, resourceGroup, *vault.Name)
+	result, err := client.List(ctx, resourceGroup, vaultName)
 	if err != nil {
 		return nil, err
 	}

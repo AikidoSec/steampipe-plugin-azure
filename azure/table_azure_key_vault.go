@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/keyvault/mgmt/keyvault"
@@ -443,4 +444,39 @@ func getKeyVaultID(item interface{}) string {
 		return *item.ID
 	}
 	return ""
+}
+
+func parseKeyVaultIDAndNameFrom(d *plugin.QueryData, h *plugin.HydrateData) (string, string, error) {
+	var vaultName, vaultID string
+	if h.Item != nil {
+		vault, ok := h.Item.(keyvault.Resource)
+		if !ok {
+			return "", "", fmt.Errorf("error casting KeyVault resource")
+		}
+
+		vaultName = ToString(vault.Name)
+		vaultID = ToString(vault.ID)
+	} else {
+		nameQuals, ok := d.EqualsQuals["vault_name"]
+		if !ok {
+			return "", "", fmt.Errorf("empty key vault name")
+		}
+		vaultName = nameQuals.GetStringValue()
+
+		idQuals, ok := d.EqualsQuals["id"]
+		if !ok {
+			return "", "", fmt.Errorf("empty key vault ID")
+		}
+		vaultID = idQuals.GetStringValue()
+	}
+
+	if vaultName == "" {
+		return "", "", fmt.Errorf("empty key vault name")
+	}
+
+	if vaultID == "" {
+		return "", "", fmt.Errorf("empty key vault ID")
+	}
+
+	return vaultID, vaultName, nil
 }

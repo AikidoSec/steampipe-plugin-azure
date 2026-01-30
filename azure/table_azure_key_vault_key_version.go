@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -19,11 +20,13 @@ func tableAzureKeyVaultKeyVersion(_ context.Context) *plugin.Table {
 		Name:        "azure_key_vault_key_version",
 		Description: "Azure Key Vault Key Version",
 		List: &plugin.ListConfig{
-			Hydrate:       listKeyVaultKeyVersions,
-			ParentHydrate: listKeyVaults,
+			Hydrate: listKeyVaultKeyVersions,
 			KeyColumns: plugin.KeyColumnSlice{
 				{
-					Name: "key_name", Require: plugin.Optional,
+					Name: "vault_name", Require: plugin.Required,
+				},
+				{
+					Name: "id", Require: plugin.Required,
 				},
 			},
 			Tags: map[string]string{
@@ -200,7 +203,11 @@ func tableAzureKeyVaultKeyVersion(_ context.Context) *plugin.Table {
 
 func listKeyVaultKeyVersions(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Get the details of key
-	vault := h.Item.(keyvault.Resource)
+	vaultID, vaultName, err := parseKeyVaultIDAndNameFrom(d, h)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_key_vault_key_version.listKeyVaultKeyVersions", "api_error", err)
+		return nil, fmt.Errorf("error parsing KeyVault ID: %v", err)
+	}
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "MANAGEMENT")
@@ -209,7 +216,7 @@ func listKeyVaultKeyVersions(ctx context.Context, d *plugin.QueryData, h *plugin
 		return nil, err
 	}
 	subscriptionID := session.SubscriptionID
-	resourceGroup := strings.Split(*vault.ID, "/")[4]
+	resourceGroup := strings.Split(vaultID, "/")[4]
 
 	client := keyvault.NewKeysClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
 	client.Authorizer = session.Authorizer
@@ -218,7 +225,7 @@ func listKeyVaultKeyVersions(ctx context.Context, d *plugin.QueryData, h *plugin
 	ApplyRetryRules(ctx, &client, d.Connection)
 
 	var keys []keyvault.Key
-	result, err := client.List(ctx, resourceGroup, *vault.Name)
+	result, err := client.List(ctx, resourceGroup, vaultName)
 	if err != nil {
 		plugin.Logger(ctx).Error("azure_key_vault_key_version.listKeyVaultKeyVersions", "api_error", err)
 		return nil, err
@@ -282,7 +289,12 @@ func getRowDataForKeyVersionAsync(ctx context.Context, d *plugin.QueryData, h *p
 }
 
 func getRowDataForKeyVersion(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData, key keyvault.Key) ([]keyvault.Key, error) {
-	vault := h.Item.(keyvault.Resource)
+	vaultID, vaultName, err := parseKeyVaultIDAndNameFrom(d, h)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_key_vault_key_version.getRowDataForKeyVersion", "api_error", err)
+		return nil, fmt.Errorf("error parsing KeyVault ID: %v", err)
+	}
+
 	keyName := d.EqualsQuals["key_name"].GetStringValue()
 	var items []keyvault.Key
 
@@ -297,7 +309,7 @@ func getRowDataForKeyVersion(ctx context.Context, d *plugin.QueryData, h *plugin
 		return nil, err
 	}
 	subscriptionID := session.SubscriptionID
-	resourceGroup := strings.Split(*vault.ID, "/")[4]
+	resourceGroup := strings.Split(vaultID, "/")[4]
 
 	client := keyvault.NewKeysClientWithBaseURI(session.ResourceManagerEndpoint, subscriptionID)
 	client.Authorizer = session.Authorizer
@@ -305,7 +317,7 @@ func getRowDataForKeyVersion(ctx context.Context, d *plugin.QueryData, h *plugin
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &client, d.Connection)
 
-	op, err := client.ListVersions(ctx, resourceGroup, *vault.Name, *key.Name)
+	op, err := client.ListVersions(ctx, resourceGroup, vaultName, *key.Name)
 	if err != nil {
 		plugin.Logger(ctx).Error("azure_key_vault_key_version.getRowDataForKeyVersion", "api_error", err)
 		return nil, err
