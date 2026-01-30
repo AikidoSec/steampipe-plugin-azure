@@ -2,6 +2,7 @@ package azure
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/profiles/latest/keyvault/mgmt/keyvault"
@@ -30,11 +31,15 @@ func tableAzureKeyVaultSecret(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			Hydrate:       listKeyVaultSecrets,
-			ParentHydrate: listKeyVaults,
+			Hydrate: listKeyVaultSecrets,
 			Tags: map[string]string{
 				"service": "Microsoft.KeyVault",
 				"action":  "vaults/secrets/read",
+			},
+			KeyColumns: plugin.KeyColumnSlice{
+				{
+					Name: "vault_name", Require: plugin.Required,
+				},
 			},
 		},
 		Columns: azureColumns([]*plugin.Column{
@@ -163,7 +168,25 @@ func tableAzureKeyVaultSecret(_ context.Context) *plugin.Table {
 
 func listKeyVaultSecrets(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
 	// Get the details of key vault
-	vault := h.Item.(keyvault.Resource)
+	var vaultName string
+	if h.Item != nil {
+		vault, ok := h.Item.(keyvault.Resource)
+		if !ok {
+			return nil, fmt.Errorf("error casting KeyVault resource")
+		}
+
+		vaultName = ToString(vault.Name)
+	} else {
+		nameQuals, ok := d.EqualsQuals["vault_name"]
+		if !ok {
+			return nil, fmt.Errorf("empty key vault name")
+		}
+		vaultName = nameQuals.GetStringValue()
+	}
+
+	if vaultName == "" {
+		return nil, fmt.Errorf("empty key vault name")
+	}
 
 	// Create session
 	session, err := GetNewSession(ctx, d, "VAULT")
@@ -171,7 +194,7 @@ func listKeyVaultSecrets(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 		return nil, err
 	}
 
-	vaultURI := "https://" + *vault.Name + ".vault.azure.net/"
+	vaultURI := "https://" + vaultName + ".vault.azure.net/"
 	maxResults := int32(25)
 
 	client := secret.New()

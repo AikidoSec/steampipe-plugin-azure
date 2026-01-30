@@ -131,3 +131,10 @@ func formatRegion(ctx context.Context, d *transform.TransformData) (interface{},
 	region := strings.ReplaceAll(valStr, " ", "")
 	return region, nil
 }
+
+func ToString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
