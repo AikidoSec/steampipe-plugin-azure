@@ -256,7 +256,7 @@ func listMySQLFlexibleServers(ctx context.Context, d *plugin.QueryData, h *plugi
 	}
 	subscriptionID := session.SubscriptionID
 
-	client, err := armmysqlflexibleservers.NewServersClient(subscriptionID, session.Cred, nil)
+	client, err := armmysqlflexibleservers.NewServersClient(subscriptionID, session.Cred, session.ClientOptions)
 	if err != nil {
 		plugin.Logger(ctx).Error("azure_mysql_flexible_server.listMySQLFlexibleServers", "session_error", err)
 		return nil, err
