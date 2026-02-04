@@ -194,7 +194,7 @@ func listKeyVaultSecrets(ctx context.Context, d *plugin.QueryData, h *plugin.Hyd
 		return nil, err
 	}
 
-	vaultURI := "https://" + vaultName + ".vault.azure.net/"
+	vaultURI := "https://" + vaultName + "." + session.Environment.KeyVaultDNSSuffix + "/"
 	maxResults := int32(25)
 
 	client := secret.New()
@@ -272,7 +272,7 @@ func getKeyVaultSecret(ctx context.Context, d *plugin.QueryData, h *plugin.Hydra
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &client, d.Connection)
 
-	vaultURI := "https://" + vaultName + ".vault.azure.net/"
+	vaultURI := "https://" + vaultName + "." + session.Environment.KeyVaultDNSSuffix + "/"
 
 	op, err := client.GetSecret(ctx, vaultURI, name, "")
 	if err != nil {

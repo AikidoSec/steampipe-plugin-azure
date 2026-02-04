@@ -208,7 +208,7 @@ func listKeyVaultCertificates(ctx context.Context, d *plugin.QueryData, h *plugi
 		plugin.Logger(ctx).Error("azure_key_vault_certificate.listKeyVaultCertificates", "session_error", err)
 		return nil, err
 	}
-	vaultURI := "https://" + vaultName + ".vault.azure.net/"
+	vaultURI := "https://" + vaultName + "." + session.Environment.KeyVaultDNSSuffix + "/"
 
 	client := keyvault.New()
 	client.Authorizer = session.Authorizer
@@ -298,7 +298,7 @@ func getKeyVaultCertificate(ctx context.Context, d *plugin.QueryData, h *plugin.
 	// Apply Retry rule
 	ApplyRetryRules(ctx, &client, d.Connection)
 
-	vaultURI := "https://" + vaultName + ".vault.azure.net/"
+	vaultURI := "https://" + vaultName + "." + session.Environment.KeyVaultDNSSuffix + "/"
 
 	op, err := client.GetCertificate(ctx, vaultURI, name, "")
 	if err != nil {

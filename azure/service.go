@@ -45,6 +45,7 @@ type Session struct {
 	StorageEndpointSuffix   string
 	SubscriptionID          string
 	TenantID                string
+	Environment             azure.Environment
 }
 
 /*
@@ -513,6 +514,7 @@ func GetNewSession(ctx context.Context, d *plugin.QueryData, tokenAudience strin
 		StorageEndpointSuffix:   settings.Environment.StorageEndpointSuffix,
 		SubscriptionID:          subscriptionID,
 		TenantID:                tenantID,
+		Environment:             settings.Environment,
 	}
 
 	var expireMins time.Duration
