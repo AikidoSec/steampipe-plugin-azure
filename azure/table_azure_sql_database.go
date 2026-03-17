@@ -259,7 +259,7 @@ func tableAzureSqlDatabase(_ context.Context) *plugin.Table {
 				Description: "The transparent data encryption info for this database.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     getSqlDatabaseTransparentDataEncryption,
-				Transform:   transform.FromField("TransparentDataEncryptionProperties"),
+				Transform:   transform.FromValue(),
 			},
 			{
 				Name:        "vulnerability_assessments",
