@@ -159,9 +159,6 @@ func listAzureCDNFrontDoorOriginGroups(ctx context.Context, d *plugin.QueryData,
 	}
 
 	for _, originGroup := range result.Values() {
-		if shouldIgnoreOriginGroupByName(d, originGroup) {
-			continue
-		}
 		d.StreamListItem(ctx, originGroup)
 		if d.RowsRemaining(ctx) == 0 {
 			return nil, nil
@@ -177,9 +174,6 @@ func listAzureCDNFrontDoorOriginGroups(ctx context.Context, d *plugin.QueryData,
 			return nil, err
 		}
 		for _, originGroup := range result.Values() {
-			if shouldIgnoreOriginGroupByName(d, originGroup) {
-				continue
-			}
 			d.StreamListItem(ctx, originGroup)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
@@ -221,30 +215,4 @@ func getAzureCDNFrontDoorOriginGroup(ctx context.Context, d *plugin.QueryData, h
 	}
 
 	return nil, nil
-}
-
-func shouldIgnoreOriginGroupByName(d *plugin.QueryData, originGroup cdn.AFDOriginGroup) bool {
-	if d.Quals["name"] == nil {
-		return false
-	}
-
-	name := ""
-	if originGroup.Name != nil {
-		name = *originGroup.Name
-	}
-
-	for _, q := range d.Quals["name"].Quals {
-		switch q.Operator {
-		case "=":
-			if name != q.Value.GetStringValue() {
-				return true
-			}
-		case "<>":
-			if name == q.Value.GetStringValue() {
-				return true
-			}
-		}
-	}
-
-	return false
 }

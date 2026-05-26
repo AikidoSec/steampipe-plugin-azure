@@ -170,9 +170,6 @@ func listAzureCDNFrontDoorEndpoints(ctx context.Context, d *plugin.QueryData, h 
 	}
 
 	for _, endpoint := range result.Values() {
-		if shouldIgnoreFrontDoorEndpointByName(d, endpoint) {
-			continue
-		}
 		d.StreamListItem(ctx, endpoint)
 		if d.RowsRemaining(ctx) == 0 {
 			return nil, nil
@@ -188,9 +185,6 @@ func listAzureCDNFrontDoorEndpoints(ctx context.Context, d *plugin.QueryData, h 
 			return nil, err
 		}
 		for _, endpoint := range result.Values() {
-			if shouldIgnoreFrontDoorEndpointByName(d, endpoint) {
-				continue
-			}
 			d.StreamListItem(ctx, endpoint)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
@@ -232,30 +226,4 @@ func getAzureCDNFrontDoorEndpoint(ctx context.Context, d *plugin.QueryData, h *p
 	}
 
 	return nil, nil
-}
-
-func shouldIgnoreFrontDoorEndpointByName(d *plugin.QueryData, endpoint cdn.AFDEndpoint) bool {
-	if d.Quals["name"] == nil {
-		return false
-	}
-
-	name := ""
-	if endpoint.Name != nil {
-		name = *endpoint.Name
-	}
-
-	for _, q := range d.Quals["name"].Quals {
-		switch q.Operator {
-		case "=":
-			if name != q.Value.GetStringValue() {
-				return true
-			}
-		case "<>":
-			if name == q.Value.GetStringValue() {
-				return true
-			}
-		}
-	}
-
-	return false
 }
