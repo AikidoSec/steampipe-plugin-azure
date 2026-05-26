@@ -50,6 +50,7 @@ func Plugin(ctx context.Context) *plugin.Plugin {
 			"azure_backup_policy":                                          tableAzureBackupPolicy(ctx),
 			"azure_bastion_host":                                           tableAzureBastionHost(ctx),
 			"azure_batch_account":                                          tableAzureBatchAccount(ctx),
+			"azure_cdn_frontdoor_endpoint":                                 tableAzureCDNFrontDoorEndpoint(ctx),
 			"azure_cdn_frontdoor_profile":                                  tableAzureCDNFrontDoorProfile(ctx),
 			"azure_cdn_frontdoor_origin_group":                             tableAzureCDNFrontDoorOriginGroup(ctx),
 			"azure_cdn_frontdoor_origin":                                   tableAzureCDNFrontDoorOrigin(ctx),
