@@ -27,17 +27,14 @@ func tableAzureCDNFrontDoorOrigin(_ context.Context) *plugin.Table {
 			},
 		},
 		List: &plugin.ListConfig{
-			ParentHydrate: listAzureCDNFrontDoorOriginGroups,
-			Hydrate:       listAzureCDNFrontDoorOrigins,
+			Hydrate: listAzureCDNFrontDoorOrigins,
 			Tags: map[string]string{
 				"service": "Microsoft.Cdn",
 				"action":  "origins/read",
 			},
 			KeyColumns: plugin.KeyColumnSlice{
-				{Name: "profile_name", Require: plugin.Optional, Operators: []string{"="}},
-				{Name: "origin_group_name", Require: plugin.Optional, Operators: []string{"="}},
-				{Name: "resource_group", Require: plugin.Optional, Operators: []string{"="}},
-				{Name: "name", Require: plugin.Optional, Operators: []string{"=", "<>"}},
+				{Name: "origin_group_id", Require: plugin.Optional},
+				{Name: "origin_group_name", Require: plugin.Required},
 			},
 		},
 		Columns: azureColumns([]*plugin.Column{
@@ -173,14 +170,15 @@ func tableAzureCDNFrontDoorOrigin(_ context.Context) *plugin.Table {
 	}
 }
 
-func listAzureCDNFrontDoorOrigins(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
-	originGroup := h.Item.(cdn.AFDOriginGroup)
-	resourceGroup := strings.Split(*originGroup.ID, "/")[4]
-	profileName := extractCDNFrontDoorProfileName(*originGroup.ID)
-	originGroupName := ""
-	if originGroup.Name != nil {
-		originGroupName = *originGroup.Name
+func listAzureCDNFrontDoorOrigins(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
+	originGroupID := d.EqualsQuals["origin_group_id"].GetStringValue()
+	originGroupName := d.EqualsQuals["origin_group_name"].GetStringValue()
+	resourceGroupComponents := strings.Split(originGroupID, "/")
+	if len(resourceGroupComponents) < 5 {
+		return nil, nil
 	}
+	resourceGroup := resourceGroupComponents[4]
+	profileName := extractCDNFrontDoorProfileName(originGroupID)
 
 	if qual := d.EqualsQualString("resource_group"); qual != "" && qual != resourceGroup {
 		return nil, nil
