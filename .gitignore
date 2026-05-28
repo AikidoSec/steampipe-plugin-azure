@@ -17,3 +17,6 @@
 # Ignore file types
 .vscode/
 .idea/
+
+# Ignore Desktop Services Store files
+.DS_Store

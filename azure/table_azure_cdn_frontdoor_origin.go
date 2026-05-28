@@ -33,8 +33,9 @@ func tableAzureCDNFrontDoorOrigin(_ context.Context) *plugin.Table {
 				"action":  "origins/read",
 			},
 			KeyColumns: plugin.KeyColumnSlice{
-				{Name: "origin_group_id", Require: plugin.Optional},
+				{Name: "resource_group", Require: plugin.Required},
 				{Name: "origin_group_name", Require: plugin.Required},
+				{Name: "profile_name", Require: plugin.Required},
 			},
 		},
 		Columns: azureColumns([]*plugin.Column{
@@ -171,22 +172,11 @@ func tableAzureCDNFrontDoorOrigin(_ context.Context) *plugin.Table {
 }
 
 func listAzureCDNFrontDoorOrigins(ctx context.Context, d *plugin.QueryData, _ *plugin.HydrateData) (interface{}, error) {
-	originGroupID := d.EqualsQuals["origin_group_id"].GetStringValue()
-	originGroupName := d.EqualsQuals["origin_group_name"].GetStringValue()
-	resourceGroupComponents := strings.Split(originGroupID, "/")
-	if len(resourceGroupComponents) < 5 {
-		return nil, nil
-	}
-	resourceGroup := resourceGroupComponents[4]
-	profileName := extractCDNFrontDoorProfileName(originGroupID)
+	originGroupName := d.EqualsQualString("origin_group_name")
+	resourceGroup := d.EqualsQualString("resource_group")
+	profileName := d.EqualsQualString("profile_name")
 
-	if qual := d.EqualsQualString("resource_group"); qual != "" && qual != resourceGroup {
-		return nil, nil
-	}
-	if qual := d.EqualsQualString("profile_name"); qual != "" && qual != profileName {
-		return nil, nil
-	}
-	if qual := d.EqualsQualString("origin_group_name"); qual != "" && qual != originGroupName {
+	if originGroupName == "" || resourceGroup == "" || profileName == "" {
 		return nil, nil
 	}
 
