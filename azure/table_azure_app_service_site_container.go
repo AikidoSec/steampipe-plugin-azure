@@ -256,19 +256,19 @@ func getAppServiceSiteContainer(ctx context.Context, d *plugin.QueryData, _ *plu
 		return nil, err
 	}
 
-	op, err := client.GetSiteContainer(ctx, resourceGroup, appName, name, nil)
+	resp, err := client.GetSiteContainer(ctx, resourceGroup, appName, name, nil)
 	if err != nil {
 		logger.Error("azure_app_service_site_container.getAppServiceSiteContainer", "api_error", err)
 		return nil, err
 	}
 
-	if op.ID != nil {
-		return &SiteContainerInfo{
-			SiteContainer: op.SiteContainer,
-			AppName:       &appName,
-			ResourceGroup: &resourceGroup,
-		}, nil
+	if resp.ID == nil {
+		return nil, nil
 	}
 
-	return nil, nil
+	return &SiteContainerInfo{
+		SiteContainer: resp.SiteContainer,
+		AppName:       &appName,
+		ResourceGroup: &resourceGroup,
+	}, nil
 }
