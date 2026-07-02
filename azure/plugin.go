@@ -40,6 +40,7 @@ func Plugin(ctx context.Context) *plugin.Plugin {
 			"azure_app_service_environment":                                tableAzureAppServiceEnvironment(ctx),
 			"azure_app_service_function_app":                               tableAzureAppServiceFunctionApp(ctx),
 			"azure_app_service_plan":                                       tableAzureAppServicePlan(ctx),
+			"azure_app_service_site_container":                             tableAzureAppServiceSiteContainer(ctx),
 			"azure_app_service_web_app":                                    tableAzureAppServiceWebApp(ctx),
 			"azure_app_service_web_app_slot":                               tableAzureAppServiceWebAppSlot(ctx),
 			"azure_application_gateway":                                    tableAzureApplicationGateway(ctx),
