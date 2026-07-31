@@ -38,6 +38,15 @@ func tableAzureMySQLFlexibleServer(_ context.Context) *plugin.Table {
 				"action":  "flexibleServers/read",
 			},
 		},
+		HydrateConfig: []plugin.HydrateConfig{
+			{
+				Func: listMySQLFlexibleServerFirewallRules,
+				Tags: map[string]string{
+					"service": "Microsoft.DBforMySQL",
+					"action":  "flexibleServers/firewallRules/read",
+				},
+			},
+		},
 		Columns: azureColumns([]*plugin.Column{
 			{
 				Name:        "name",
@@ -185,6 +194,13 @@ func tableAzureMySQLFlexibleServer(_ context.Context) *plugin.Table {
 				Description: "The server configurations(parameters) details of the server.",
 				Type:        proto.ColumnType_JSON,
 				Hydrate:     listMySQLFlexibleServersConfigurations,
+				Transform:   transform.FromValue(),
+			},
+			{
+				Name:        "firewall_rules",
+				Description: "The list of firewall rules in a server.",
+				Type:        proto.ColumnType_JSON,
+				Hydrate:     listMySQLFlexibleServerFirewallRules,
 				Transform:   transform.FromValue(),
 			},
 			{
@@ -405,6 +421,43 @@ func listMySQLFlexibleServersConfigurations(ctx context.Context, d *plugin.Query
 	}
 
 	return mySQLFlexibleServersConfigurations, nil
+}
+
+func listMySQLFlexibleServerFirewallRules(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+	server := h.Item.(armmysqlflexibleservers.Server)
+	if server.ID == nil || server.Name == nil {
+		return nil, nil
+	}
+
+	resourceGroup := strings.Split(*server.ID, "/")[4]
+	serverName := *server.Name
+
+	session, err := GetNewSessionUpdated(ctx, d)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_mysql_flexible_server.listMySQLFlexibleServerFirewallRules", "session_error", err)
+		return nil, err
+	}
+
+	client, err := armmysqlflexibleservers.NewFirewallRulesClient(session.SubscriptionID, session.Cred, session.ClientOptions)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_mysql_flexible_server.listMySQLFlexibleServerFirewallRules", "client_error", err)
+		return nil, err
+	}
+
+	var firewallRules []*armmysqlflexibleservers.FirewallRule
+	pager := client.NewListByServerPager(resourceGroup, serverName, nil)
+
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			plugin.Logger(ctx).Error("azure_mysql_flexible_server.listMySQLFlexibleServerFirewallRules", "api_error", err)
+			return nil, err
+		}
+
+		firewallRules = append(firewallRules, page.Value...)
+	}
+
+	return firewallRules, nil
 }
 
 //// TRANSFORM FUNCTION
