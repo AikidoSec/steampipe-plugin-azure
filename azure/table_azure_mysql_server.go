@@ -37,6 +37,13 @@ func tableAzureMySQLServer(_ context.Context) *plugin.Table {
 		},
 		HydrateConfig: []plugin.HydrateConfig{
 			{
+				Func: listMySQLServerFirewallRules,
+				Tags: map[string]string{
+					"service": "Microsoft.DBforMySQL",
+					"action":  "servers/firewallRules/read",
+				},
+			},
+			{
 				Func: listMySQLServersServerKeys,
 				Tags: map[string]string{
 					"service": "Microsoft.DBforMySQL",
@@ -230,6 +237,13 @@ func tableAzureMySQLServer(_ context.Context) *plugin.Table {
 				Description: "A list of private endpoint connections on a server.",
 				Type:        proto.ColumnType_JSON,
 				Transform:   transform.From(extractMySQLServerPrivateEndpointConnections),
+			},
+			{
+				Name:        "firewall_rules",
+				Description: "A list of firewall rules for a server.",
+				Type:        proto.ColumnType_JSON,
+				Hydrate:     listMySQLServerFirewallRules,
+				Transform:   transform.FromValue(),
 			},
 			{
 				Name:        "server_security_alert_policy",
@@ -454,6 +468,40 @@ func listMySQLServerVnetRules(ctx context.Context, d *plugin.QueryData, h *plugi
 	}
 
 	return vnetRules, nil
+}
+
+func listMySQLServerFirewallRules(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
+	server := h.Item.(mysql.Server)
+	if server.ID == nil || server.Name == nil {
+		return nil, nil
+	}
+
+	resourceGroup := strings.Split(*server.ID, "/")[4]
+	serverName := *server.Name
+
+	session, err := GetNewSession(ctx, d, "MANAGEMENT")
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_mysql_server.listMySQLServerFirewallRules", "session_error", err)
+		return nil, err
+	}
+
+	client := mysql.NewFirewallRulesClientWithBaseURI(session.ResourceManagerEndpoint, session.SubscriptionID)
+	client.Authorizer = session.Authorizer
+
+	// Apply Retry rule
+	ApplyRetryRules(ctx, &client, d.Connection)
+
+	op, err := client.ListByServer(ctx, resourceGroup, serverName)
+	if err != nil {
+		plugin.Logger(ctx).Error("azure_mysql_server.listMySQLServerFirewallRules", "api_error", err)
+		return nil, err
+	}
+
+	if op.Value != nil {
+		return *op.Value, nil
+	}
+
+	return nil, nil
 }
 
 func listMySQLServersConfigurations(ctx context.Context, d *plugin.QueryData, h *plugin.HydrateData) (interface{}, error) {
