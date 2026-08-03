@@ -99,6 +99,7 @@ func Plugin(ctx context.Context) *plugin.Plugin {
 			"azure_databox_edge_device":                                    tableAzureDataBoxEdgeDevice(ctx),
 			"azure_databricks_workspace":                                   tableAzureDatabricksWorkspace(ctx),
 			"azure_diagnostic_setting":                                     tableAzureDiagnosticSetting(ctx),
+			"azure_documentdb_mongo_cluster":                               tableAzureDocumentDBMongoCluster(ctx),
 			"azure_dns_zone":                                               tableAzureDNSZone(ctx),
 			"azure_eventgrid_domain":                                       tableAzureEventGridDomain(ctx),
 			"azure_eventgrid_topic":                                        tableAzureEventGridTopic(ctx),
