@@ -22,11 +22,6 @@ func tableAzureDocumentDBMongoCluster(_ context.Context) *plugin.Table {
 				"service": "Microsoft.DocumentDB",
 				"action":  "mongoClusters/read",
 			},
-			KeyColumns: plugin.KeyColumnSlice{
-				{Name: "name", Require: plugin.Optional, Operators: []string{"=", "<>"}},
-				{Name: "region", Require: plugin.Optional, Operators: []string{"=", "<>"}},
-				{Name: "resource_group", Require: plugin.Optional, Operators: []string{"=", "<>"}},
-			},
 		},
 		Columns: azureColumns([]*plugin.Column{
 			{
@@ -77,13 +72,6 @@ func tableAzureDocumentDBMongoCluster(_ context.Context) *plugin.Table {
 				Type:        proto.ColumnType_STRING,
 				Hydrate:     getDocumentDBMongoClusterDetails,
 				Transform:   transform.FromField("Properties.CreateMode").Transform(transformToString),
-			},
-			{
-				Name:        "mongo_uri",
-				Description: "The connection URI for the Mongo cluster.",
-				Type:        proto.ColumnType_STRING,
-				Hydrate:     getDocumentDBMongoClusterDetails,
-				Transform:   transform.FromField("Properties.ConnectionString"),
 			},
 			{
 				Name:        "public_network_access",
@@ -255,6 +243,9 @@ func listDocumentDBMongoClusters(ctx context.Context, d *plugin.QueryData, _ *pl
 			return nil, err
 		}
 		for _, cluster := range page.Value {
+			// Wait for rate limiting
+			d.WaitForListRateLimit(ctx)
+
 			d.StreamListItem(ctx, cluster)
 			if d.RowsRemaining(ctx) == 0 {
 				return nil, nil
