@@ -175,7 +175,7 @@ func listContainerAppEnvironments(ctx context.Context, d *plugin.QueryData, _ *p
 	pager := client.NewListBySubscriptionPager(nil)
 	for pager.More() {
 		d.WaitForListRateLimit(ctx)
-		
+
 		page, err := pager.NextPage(ctx)
 		if err != nil {
 			plugin.Logger(ctx).Error("azure_container_app_environment.listContainerAppEnvironments", "api_error", err)
