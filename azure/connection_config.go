@@ -9,6 +9,9 @@ type azureConfig struct {
 	SubscriptionID        *string  `hcl:"subscription_id"`
 	ClientID              *string  `hcl:"client_id"`
 	ClientSecret          *string  `hcl:"client_secret"`
+	ArmAccessToken        *string  `hcl:"arm_access_token"`
+	GraphAccessToken      *string  `hcl:"graph_access_token"`
+	VaultAccessToken      *string  `hcl:"vault_access_token"`
 	CertificatePath       *string  `hcl:"certificate_path"`
 	CertificatePassword   *string  `hcl:"certificate_password"`
 	Username              *string  `hcl:"username"`

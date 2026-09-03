@@ -51,11 +51,12 @@ type Session struct {
 /*
 	GetNewSessionUpdated creates an session configured from (~/.steampipe/config, environment variables and CLI) in the order:
 
-1. Client secret
-2. Client certificate
-3. Username and password
-4. Managed identity
-5. CLI
+1. Access token
+2. Client secret
+3. Client certificate
+4. Username and password
+5. Managed identity
+6. CLI
 */
 func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *SessionNew, err error) {
 	logger := plugin.Logger(ctx)
@@ -67,7 +68,7 @@ func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *Se
 
 	logger.Debug("Auth session not found in cache, creating new session")
 
-	var tenantID, subscriptionID, clientID, clientSecret, certificatePath, certificatePassword, username, password, environment string
+	var tenantID, subscriptionID, clientID, clientSecret, armAccessToken, certificatePath, certificatePassword, username, password, environment string
 	azureConfig := GetConfig(d.Connection)
 
 	if azureConfig.Environment != nil {
@@ -98,6 +99,10 @@ func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *Se
 		clientSecret = *azureConfig.ClientSecret
 	} else {
 		clientSecret = os.Getenv(auth.ClientSecret)
+	}
+
+	if azureConfig.ArmAccessToken != nil {
+		armAccessToken = *azureConfig.ArmAccessToken
 	}
 
 	if azureConfig.CertificatePath != nil {
@@ -140,7 +145,14 @@ func GetNewSessionUpdated(ctx context.Context, d *plugin.QueryData) (session *Se
 		RetryDelay: *retryRules.MinErrorRetryDelay,
 	}
 
-	if tenantID != "" && subscriptionID != "" && clientID != "" && clientSecret != "" { // Client secret authentication
+	if armAccessToken != "" { // Static access token authentication. Every client backed by this session is ARM-audience only.
+		// A static token cannot be exchanged for subscription info the way the CLI credential
+		// can, so subscription_id must be supplied explicitly rather than silently left empty.
+		if subscriptionID == "" {
+			return nil, fmt.Errorf("subscription_id must be set in the connection config or AZURE_SUBSCRIPTION_ID environment variable when arm_access_token is used")
+		}
+		cred = staticTokenCredential(armAccessToken)
+	} else if tenantID != "" && subscriptionID != "" && clientID != "" && clientSecret != "" { // Client secret authentication
 		cred, err = azidentity.NewClientSecretCredential(
 			tenantID,
 			clientID,
@@ -394,6 +406,11 @@ func GetNewSession(ctx context.Context, d *plugin.QueryData, tokenAudience strin
 		settings.Values[auth.ClientSecret] = os.Getenv(auth.ClientSecret)
 	}
 
+	// Azure access tokens are audience-scoped: a token minted for ARM cannot be used
+	// against Key Vault's data plane or Microsoft Graph, so the static token must be
+	// selected per tokenAudience rather than reusing a single one for all of them.
+	accessToken := selectAccessTokenForAudience(azureConfig, tokenAudience)
+
 	if azureConfig.CertificatePath != nil {
 		settings.Values[auth.CertificatePath] = *azureConfig.CertificatePath
 	} else {
@@ -440,50 +457,62 @@ func GetNewSession(ctx context.Context, d *plugin.QueryData, tokenAudience strin
 		settings.Environment = env
 	}
 
-	authMethod, resource, err := getApplicableAuthorizationDetails(ctx, settings, tokenAudience)
-	if err != nil {
-		logger.Error("GetNewSession", "getApplicableAuthorizationDetails error", err)
-		return nil, err
-	}
-	settings.Values[auth.Resource] = resource
-
 	var authorizer autorest.Authorizer
 	var expiresOn *time.Time
+	var authMethod, resource string
 
-	// so if it was not in cache - create session
-	switch authMethod {
-	case "Environment":
-		logger.Trace("Creating new session authorizer from environment")
-		authorizer, err = settings.GetAuthorizer()
+	if accessToken != "" {
+		// Only the ARM/MANAGEMENT audience needs a subscription ID; GRAPH and VAULT tokens
+		// aren't scoped to a subscription. A static token also has no CLI fallback to derive
+		// one from, so it must be supplied explicitly rather than silently left empty.
+		if subscriptionID == "" && tokenAudience != "GRAPH" && tokenAudience != "VAULT" {
+			return nil, fmt.Errorf("subscription_id must be set in the connection config or AZURE_SUBSCRIPTION_ID environment variable when arm_access_token is used")
+		}
+		logger.Trace("Creating new session authorizer from static access token")
+		authorizer = autorest.NewBearerAuthorizer(staticOAuthTokenProvider(accessToken))
+	} else {
+		authMethod, resource, err = getApplicableAuthorizationDetails(ctx, settings, tokenAudience)
 		if err != nil {
-			logger.Error("GetNewSession", "NewAuthorizerFromEnvironmentWithResource error", err)
+			logger.Error("GetNewSession", "getApplicableAuthorizationDetails error", err)
 			return nil, err
 		}
+		settings.Values[auth.Resource] = resource
 
-	// Get the subscription ID and tenant ID for "GRAPH" token audience
-	case "CLI":
-		logger.Trace("Getting token for authorizer from Azure CLI")
-		token, err := cli.GetTokenFromCLI(resource)
-		if err != nil {
-			logger.Error("GetNewSession", "get_token_from_cli_error", err)
-			return nil, err
-		}
-
-		adalToken, err := token.ToADALToken()
-		expiresOn = types.Time(adalToken.Expires())
-		logger.Trace("GetNewSession", "Getting token for authorizer from Azure CLI, expiresOn", expiresOn.Local())
-
-		if err != nil {
-			logger.Error("GetNewSession", "Get token from Azure CLI error", err)
-			// Check if the password was changed and the session token is stored in the system, or if the CLI is outdated
-			if strings.Contains(err.Error(), "invalid_grant") {
-				return nil, fmt.Errorf("ValidationError: The credential data used by the CLI has expired because you might have changed or reset the password. Please clear your browser's cookies and run 'az login'.")
+		// so if it was not in cache - create session
+		switch authMethod {
+		case "Environment":
+			logger.Trace("Creating new session authorizer from environment")
+			authorizer, err = settings.GetAuthorizer()
+			if err != nil {
+				logger.Error("GetNewSession", "NewAuthorizerFromEnvironmentWithResource error", err)
+				return nil, err
 			}
-			return nil, err
+
+		// Get the subscription ID and tenant ID for "GRAPH" token audience
+		case "CLI":
+			logger.Trace("Getting token for authorizer from Azure CLI")
+			token, err := cli.GetTokenFromCLI(resource)
+			if err != nil {
+				logger.Error("GetNewSession", "get_token_from_cli_error", err)
+				return nil, err
+			}
+
+			adalToken, err := token.ToADALToken()
+			expiresOn = types.Time(adalToken.Expires())
+			logger.Trace("GetNewSession", "Getting token for authorizer from Azure CLI, expiresOn", expiresOn.Local())
+
+			if err != nil {
+				logger.Error("GetNewSession", "Get token from Azure CLI error", err)
+				// Check if the password was changed and the session token is stored in the system, or if the CLI is outdated
+				if strings.Contains(err.Error(), "invalid_grant") {
+					return nil, fmt.Errorf("ValidationError: The credential data used by the CLI has expired because you might have changed or reset the password. Please clear your browser's cookies and run 'az login'.")
+				}
+				return nil, err
+			}
+			authorizer = autorest.NewBearerAuthorizer(&adalToken)
+		default:
+			return nil, fmt.Errorf("invalid Azure authentication method: %s", authMethod)
 		}
-		authorizer = autorest.NewBearerAuthorizer(&adalToken)
-	default:
-		return nil, fmt.Errorf("invalid Azure authentication method: %s", authMethod)
 	}
 
 	// Get the subscription ID and tenant ID from CLI if not set in connection
@@ -529,6 +558,26 @@ func GetNewSession(ctx context.Context, d *plugin.QueryData, tokenAudience strin
 	d.ConnectionManager.Cache.SetWithTTL(cacheKey, sess, expireMins)
 
 	return sess, err
+}
+
+// selectAccessTokenForAudience picks the one static access token that matches the audience
+// a given table/session actually needs, mirroring the resource resolution in
+// getApplicableAuthorizationDetails below (which defaults unrecognized/empty audiences to
+// the ARM management endpoint).
+func selectAccessTokenForAudience(cfg azureConfig, tokenAudience string) string {
+	var token *string
+	switch tokenAudience {
+	case "VAULT":
+		token = cfg.VaultAccessToken
+	case "GRAPH":
+		token = cfg.GraphAccessToken
+	default: // "MANAGEMENT" and anything else
+		token = cfg.ArmAccessToken
+	}
+	if token == nil {
+		return ""
+	}
+	return *token
 }
 
 func getApplicableAuthorizationDetails(ctx context.Context, settings auth.EnvironmentSettings, tokenAudience string) (authMethod string, resource string, err error) {
