@@ -20,6 +20,8 @@ type subnetInfo = struct {
 	ResourceGroup  *string
 }
 
+var hydrateIgnoredErrorCodes = []string{"InvalidAuthenticationTokenTenant", "StatusCode=404"}
+
 //// TABLE DEFINITION
 
 func tableAzureSubnet(_ context.Context) *plugin.Table {
@@ -296,6 +298,9 @@ func getSubnetIpConfigurations(ctx context.Context, d *plugin.QueryData, h *plug
 	// Collect any errors from errorCh
 	var collectedErrors []error
 	for err := range errorCh {
+		if isHydrateErrorIgnored(err) {
+			continue
+		}
 		collectedErrors = append(collectedErrors, err)
 	}
 
@@ -382,4 +387,14 @@ func getIpConfiguration(ctx context.Context, ipConfig *network.IPConfiguration, 
 	}
 
 	return &resourceData, nil
+}
+
+func isHydrateErrorIgnored(err error) bool {
+	for _, ignoredError := range hydrateIgnoredErrorCodes {
+		if strings.Contains(err.Error(), ignoredError) {
+			return true
+		}
+	}
+
+	return false
 }
